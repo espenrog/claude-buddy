@@ -647,7 +647,7 @@ class UpdatePackageTests(unittest.TestCase):
     def test_a_buddy_that_cannot_be_updated_is_refused(self):
         b = self.b
         b.UPDATE.set("idle")
-        ctx = b.WebContext(8787, asyncio.Queue(), asyncio.Queue())
+        ctx = b.WebContext(8787, None, None)  # the refusals never reach the queues
         headers = {"x-claude-buddy": "1", "host": "127.0.0.1:8787"}
         for ble, can_update, code in ((False, False, b"503"), (True, False, b"409")):
             b.STATE.reset_link()
