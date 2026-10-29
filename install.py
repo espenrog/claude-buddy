@@ -11,7 +11,9 @@ needs. The default (Claude Code and the buddy on the same machine) uses no broke
 """
 
 import argparse
+import base64
 import getpass
+import hashlib
 import json
 import os
 import platform
@@ -290,9 +292,18 @@ def setup_venv():
 # ------------------------------------------------------------------ MQTT broker (relay host)
 
 
+def mosquitto_password_line(user, password, salt=None):
+    """One line of a Mosquitto 2 password file: PBKDF2-SHA512 with 101 iterations and a 12-byte salt (what
+    mosquitto_passwd writes). Made here so the password itself never reaches a command line or the container."""
+    salt = os.urandom(12) if salt is None else salt
+    digest = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, 101)
+    return f"{user}:$7$101${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
 def setup_broker(port, user, password):
     """Runs Mosquitto in Docker with a password file. Config and data live in named Docker volumes, so
-    the files are owned and protected by the container (no host path or permission problems)."""
+    the files are owned and protected by the container (no host path or permission problems). Both files go
+    in through stdin, and the password file holds only a salted hash: nothing secret is visible in `ps`."""
     if not have("docker"):
         say("  Docker was not found, so I can't start the relay for you.")
         say("  Install Docker (https://docs.docker.com/get-docker/) and re-run this installer,")
@@ -303,18 +314,40 @@ def setup_broker(port, user, password):
     config_vol, data_vol = BROKER_VOLUMES
     for vol in BROKER_VOLUMES:
         run(["docker", "volume", "create", vol], quiet=True, stdout=subprocess.DEVNULL)
-    script = ("cat > /mosquitto/config/mosquitto.conf && rm -f /mosquitto/config/passwd && "  # -c fails on an existing file
-              'mosquitto_passwd -b -c /mosquitto/config/passwd "$BUDDY_USER" "$BUDDY_PASSWORD" && '
+    # stdin: the password file's one line, then the config. read and printf are shell built-ins (no new process).
+    script = ("IFS= read -r line && printf '%s\\n' \"$line\" > /mosquitto/config/passwd && "
+              "cat > /mosquitto/config/mosquitto.conf && "
               "chown mosquitto:mosquitto /mosquitto/config/passwd && chmod 0700 /mosquitto/config/passwd")
-    run(["docker", "run", "--rm", "-i", "-e", f"BUDDY_USER={user}", "-e", f"BUDDY_PASSWORD={password}",
-         "-v", f"{config_vol}:/mosquitto/config", BROKER_IMAGE, "sh", "-c", script],
-        quiet=True, input=conf.encode(), stderr=subprocess.DEVNULL)
+    run(["docker", "run", "--rm", "-i", "-v", f"{config_vol}:/mosquitto/config", BROKER_IMAGE, "sh", "-c", script],
+        quiet=True, input=(mosquitto_password_line(user, password) + "\n" + conf).encode(), stderr=subprocess.DEVNULL)
     run(["docker", "rm", "-f", BROKER_CONTAINER], check=False, quiet=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     run(["docker", "run", "-d", "--name", BROKER_CONTAINER, "--restart", "unless-stopped",
          "-p", f"{port}:1883", "-v", f"{config_vol}:/mosquitto/config", "-v", f"{data_vol}:/mosquitto/data",
          BROKER_IMAGE], quiet=True, stdout=subprocess.DEVNULL)
     say(f"  relay running (container '{BROKER_CONTAINER}', port {port})")
+
+
+RELAY_PASSWORD_ENV = "CLAUDE_BUDDY_RELAY_PASSWORD"
+
+
+def preset_relay_password(args):
+    """The relay password for an unattended install: from --relay-password-file (a path, or - for stdin) or the
+    CLAUDE_BUDDY_RELAY_PASSWORD environment variable. Not a plain option, which would leave it in the shell
+    history and the process list."""
+    if args.relay_password_file:
+        try:
+            if args.relay_password_file == "-":
+                text = sys.stdin.readline()
+            else:
+                text = Path(args.relay_password_file).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            die(f"cannot read the relay password file: {exc}")
+        password = text.strip()
+        if not password:
+            die("the relay password file is empty")
+        return password
+    return os.environ.get(RELAY_PASSWORD_ENV) or None
 
 
 def existing_relay_password():
@@ -560,7 +593,7 @@ def cmd_install(args):
         relay["host"] = ask.text("Relay address (host name or IP)", None, args.relay_host)
         relay["port"] = int(ask.text("Relay port", "1883", args.relay_port))
         relay["user"] = ask.text("Relay user", relay["user"], args.relay_user)
-        relay["password"] = ask.text("Relay password", None, args.relay_password, secret=True)
+        relay["password"] = ask.text("Relay password", None, preset_relay_password(args), secret=True)
         say("\nSome networks (for example corporate VPNs) reset plain connections to the relay. An SSH tunnel avoids that.")
         say("It needs key-based SSH login to the machine that hosts the relay (no password prompt).")
         if ask.yesno("Reach the relay through an SSH tunnel?", False, None if args.ssh_tunnel is None else True):
@@ -835,7 +868,7 @@ def cmd_doctor():
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Claude Buddy installer")
+    ap = argparse.ArgumentParser(description="Claude Buddy installer", allow_abbrev=False)
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--doctor", action="store_true", help="check every part of the setup and explain problems")
     ap.add_argument("--uninstall", action="store_true")
@@ -851,10 +884,15 @@ def main():
     ap.add_argument("--relay-host")
     ap.add_argument("--relay-port")
     ap.add_argument("--relay-user")
-    ap.add_argument("--relay-password")
+    ap.add_argument("--relay-password-file", metavar="PATH",
+                    help=f"read the relay password from this file (- = stdin); or set {RELAY_PASSWORD_ENV}")
+    ap.add_argument("--relay-password", help=argparse.SUPPRESS)  # removed: refused below, without echoing the value
     ap.add_argument("--ssh-tunnel", metavar="USER@HOST")
     ap.add_argument("--no-service", action="store_true", help="do not set up autostart")
     args = ap.parse_args()
+    if args.relay_password is not None:
+        die(f"--relay-password is no longer accepted (it would leave the password in your shell history and the process "
+            f"list). Use --relay-password-file <path> (or - for stdin), or set {RELAY_PASSWORD_ENV}.")
 
     if args.doctor:
         cmd_doctor()

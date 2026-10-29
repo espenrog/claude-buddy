@@ -117,9 +117,13 @@ Every question has a command-line option, and `--yes` accepts the defaults; see 
 
 ```bash
 python3 install.py --yes --claude no --buddy yes --relay join \
-    --relay-host devbox.example.org --relay-user claude-buddy --relay-password '...' \
+    --relay-host devbox.example.org --relay-user claude-buddy --relay-password-file ~/relay-password.txt \
     --ssh-tunnel me@devbox.example.org
 ```
+
+The relay password is the one value with no plain option, so it never lands in your shell history or the process list.
+Give it as a file (`--relay-password-file <path>`, or `-` to read one line from stdin), or in the environment variable
+`CLAUDE_BUDDY_RELAY_PASSWORD`. Delete the file afterwards; the installer keeps the password in `config.json` (mode 600).
 
 ## Tracking estimated spending (optional)
 

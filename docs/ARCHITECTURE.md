@@ -102,10 +102,12 @@ flowchart TB
   are refused (blocks other web sites), and anything under `/api/` that changes state needs a custom `X-Claude-Buddy` header,
   which a web page on another site cannot send. The page is served with a strict content security policy and loads nothing
   from the internet.
-* **The relay** is password-protected, but MQTT is plain text. Run it on a trusted LAN or VPN, or reach
-  it through the bridge's built-in SSH tunnel option. Do not expose port 1883 to the internet.
-* **The buddy's BLE characteristic** requires no pairing. Anyone within radio range can change its face.
-  It carries no data and controls nothing else.
+* **The relay** is password-protected (a random password the installer generates), but MQTT is plain text: the
+  password and the events cross the network unencrypted. Run it on a trusted LAN or VPN, or reach it through the
+  bridge's built-in SSH tunnel option. Do not expose port 1883 to the internet. The installer never puts the password
+  on a command line, and the broker only stores a salted hash of it.
+* **The buddy** talks only to a paired bridge (LE Secure Connections, Just Works; see [PROTOCOL.md](PROTOCOL.md#pairing)).
+  New pairings are accepted only while its pairing window is open, and firmware updates must be signed with your key.
 * **Secrets** live in `~/.config/claude-buddy/config.json` (mode 600). Nothing is sent to any cloud service.
 * **The installer** edits `~/.claude/settings.json`: it makes a timestamped backup first and only ever
   touches hook entries that it created.

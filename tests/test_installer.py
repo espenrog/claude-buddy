@@ -1,5 +1,6 @@
 """The installer against a throwaway home directory (relay-client role: no network, no Bluetooth)."""
 
+import argparse
 import json
 import os
 import subprocess
@@ -10,14 +11,32 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALL = os.path.join(ROOT, "install.py")
 ARGS = ["--yes", "--claude", "yes", "--buddy", "no", "--relay", "join", "--relay-host", "relay.example.org",
-        "--relay-user", "buddy", "--relay-password", "not-a-real-password"]
+        "--relay-user", "buddy"]  # the password comes from the environment (see setUp)
+
+
+def load_installer(home):
+    """Imports install.py as a module, with the home directory pointed at `home`."""
+    import importlib.util
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+    os.environ["HOME"] = os.environ["USERPROFILE"] = home
+    try:
+        spec = importlib.util.spec_from_file_location("install_under_test", INSTALL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = self.tmp.name
-        self.env = dict(os.environ, HOME=self.home, USERPROFILE=self.home)
+        self.env = dict(os.environ, HOME=self.home, USERPROFILE=self.home, CLAUDE_BUDDY_RELAY_PASSWORD="not-a-real-password")
         os.makedirs(os.path.join(self.home, ".claude"))
         self.settings = os.path.join(self.home, ".claude", "settings.json")
         with open(self.settings, "w", encoding="utf-8") as f:
@@ -123,22 +142,6 @@ if __name__ == "__main__":
 class RelayPasswordReuseTests(unittest.TestCase):
     """Re-running the installer on a relay host must not change the password (that would lock out bridges)."""
 
-    def load_installer(self, home):
-        import importlib.util
-        saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
-        os.environ["HOME"] = os.environ["USERPROFILE"] = home
-        try:
-            spec = importlib.util.spec_from_file_location("install_under_test", INSTALL)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module
-        finally:
-            for k, v in saved.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-
     def write_config(self, home, cfg):
         path = os.path.join(home, ".config", "claude-buddy")
         os.makedirs(path)
@@ -148,18 +151,96 @@ class RelayPasswordReuseTests(unittest.TestCase):
     def test_password_is_reused_on_a_relay_host(self):
         with tempfile.TemporaryDirectory() as home:
             self.write_config(home, {"roles": {"relay": "host"}, "relay": {"password": "keep-me"}})
-            self.assertEqual(self.load_installer(home).existing_relay_password(), "keep-me")
+            self.assertEqual(load_installer(home).existing_relay_password(), "keep-me")
 
     def test_older_config_hosting_on_localhost_counts_as_a_host(self):
         with tempfile.TemporaryDirectory() as home:
             self.write_config(home, {"relay": {"host": "localhost", "password": "old-style"}})
-            self.assertEqual(self.load_installer(home).existing_relay_password(), "old-style")
+            self.assertEqual(load_installer(home).existing_relay_password(), "old-style")
 
     def test_a_relay_client_does_not_reuse_anything(self):
         with tempfile.TemporaryDirectory() as home:
             self.write_config(home, {"roles": {"relay": "join"}, "relay": {"password": "someone-elses"}})
-            self.assertIsNone(self.load_installer(home).existing_relay_password())
+            self.assertIsNone(load_installer(home).existing_relay_password())
 
     def test_no_config_means_no_password(self):
         with tempfile.TemporaryDirectory() as home:
-            self.assertIsNone(self.load_installer(home).existing_relay_password())
+            self.assertIsNone(load_installer(home).existing_relay_password())
+
+class RelayPasswordSecrecyTests(unittest.TestCase):
+    """The relay password must not show up in a command line (shell history, `ps`) or reach the broker in clear."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.inst = load_installer(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def args(self, file=None):
+        return argparse.Namespace(relay_password_file=file)
+
+    def test_the_password_file_line_is_mosquittos_pbkdf2_format(self):
+        import base64
+        import hashlib
+        line = self.inst.mosquitto_password_line("claude-buddy", "s3cret", salt=bytes(range(12)))
+        user, rest = line.split(":", 1)
+        _, kind, rounds, salt, digest = rest.split("$")
+        self.assertEqual((user, kind, rounds), ("claude-buddy", "7", "101"))
+        self.assertEqual(base64.b64decode(salt), bytes(range(12)))
+        self.assertEqual(base64.b64decode(digest), hashlib.pbkdf2_hmac("sha512", b"s3cret", bytes(range(12)), 101))
+        self.assertNotIn("s3cret", line)
+        other = self.inst.mosquitto_password_line("claude-buddy", "s3cret")
+        self.assertNotEqual(other, self.inst.mosquitto_password_line("claude-buddy", "s3cret"))  # a new salt each time
+
+    def test_unattended_password_from_a_file_stdin_or_the_environment(self):
+        path = os.path.join(self.tmp.name, "pw")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("from-file\n")
+        saved = os.environ.pop(self.inst.RELAY_PASSWORD_ENV, None)
+        try:
+            self.assertEqual(self.inst.preset_relay_password(self.args(path)), "from-file")
+            self.assertIsNone(self.inst.preset_relay_password(self.args()))
+            os.environ[self.inst.RELAY_PASSWORD_ENV] = "from-env"
+            self.assertEqual(self.inst.preset_relay_password(self.args()), "from-env")
+            self.assertEqual(self.inst.preset_relay_password(self.args(path)), "from-file")  # the file wins
+        finally:
+            os.environ.pop(self.inst.RELAY_PASSWORD_ENV, None)
+            if saved is not None:
+                os.environ[self.inst.RELAY_PASSWORD_ENV] = saved
+        result = subprocess.run([sys.executable, "-c", "import importlib.util, argparse, sys;"
+                                 f"s = importlib.util.spec_from_file_location('i', {INSTALL!r}); m = importlib.util.module_from_spec(s);"
+                                 "s.loader.exec_module(m); print(m.preset_relay_password(argparse.Namespace(relay_password_file='-')))"],
+                                input="from-stdin\n", capture_output=True, text=True, env=dict(os.environ, HOME=self.tmp.name))
+        self.assertEqual(result.stdout.strip(), "from-stdin", result.stderr)
+
+    def test_an_empty_password_file_is_refused(self):
+        path = os.path.join(self.tmp.name, "empty")
+        open(path, "w").close()
+        with self.assertRaises(SystemExit):
+            self.inst.preset_relay_password(self.args(path))
+
+    def test_there_is_no_plain_password_option(self):
+        env = dict(os.environ, HOME=self.tmp.name, USERPROFILE=self.tmp.name)
+        result = subprocess.run([sys.executable, INSTALL, "--relay-password", "leaky-value", "--yes"], capture_output=True,
+                                text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("leaky-value", result.stdout + result.stderr)
+        # An abbreviation must not be taken for --relay-password-file (that would try to open a file named like the password).
+        result = subprocess.run([sys.executable, INSTALL, "--relay-pass", "leaky-value", "--yes"], capture_output=True,
+                                text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("password file", result.stdout + result.stderr)
+
+    def test_setting_up_the_broker_never_puts_the_password_on_a_command_line(self):
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append((cmd, kw.get("input")))
+        self.inst.run, self.inst.have = fake_run, lambda _: True
+        self.inst.setup_broker(1883, "claude-buddy", "s3cret-value")
+        self.assertTrue(calls)
+        for cmd, data in calls:
+            self.assertFalse(any("s3cret-value" in str(c) for c in cmd), cmd)
+            self.assertNotIn(b"s3cret-value", data or b"")
+        self.assertTrue(any(data and b"claude-buddy:$7$101$" in data for _, data in calls))

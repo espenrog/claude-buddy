@@ -83,8 +83,8 @@ class DoctorTests(unittest.TestCase):
         self.env = dict(os.environ, HOME=self.home, USERPROFILE=self.home)
         self.port = free_port()
         subprocess.run([sys.executable, INSTALL, "--yes", "--claude", "yes", "--buddy", "no", "--relay", "join",
-                        "--relay-host", "127.0.0.1", "--relay-password", "x"],
-                       env=self.env, check=True, capture_output=True)
+                        "--relay-host", "127.0.0.1"],
+                       env=dict(self.env, CLAUDE_BUDDY_RELAY_PASSWORD="x"), check=True, capture_output=True)
         path = os.path.join(self.home, ".config", "claude-buddy", "config.json")
         with open(path, encoding="utf-8") as f:
             cfg = json.load(f)
@@ -165,7 +165,7 @@ class StaleInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             env = dict(os.environ, HOME=home, USERPROFILE=home)
             subprocess.run([sys.executable, INSTALL, "--yes", "--claude", "yes", "--buddy", "no", "--relay", "join",
-                            "--relay-host", "127.0.0.1", "--relay-password", "x"], env=env, check=True,
+                            "--relay-host", "127.0.0.1"], env=dict(env, CLAUDE_BUDDY_RELAY_PASSWORD="x"), check=True,
                            capture_output=True)
             emit = os.path.join(home, ".local", "share", "claude-buddy", "emit.py")
             with open(emit, "a", encoding="utf-8") as f:
@@ -178,7 +178,7 @@ class StaleInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             env = dict(os.environ, HOME=home, USERPROFILE=home)
             subprocess.run([sys.executable, INSTALL, "--yes", "--claude", "yes", "--buddy", "no", "--relay", "join",
-                            "--relay-host", "127.0.0.1", "--relay-password", "x"], env=env, check=True,
+                            "--relay-host", "127.0.0.1"], env=dict(env, CLAUDE_BUDDY_RELAY_PASSWORD="x"), check=True,
                            capture_output=True)
             emit = os.path.join(home, ".local", "share", "claude-buddy", "emit.py")
             with open(emit, "w", encoding="utf-8") as f:
