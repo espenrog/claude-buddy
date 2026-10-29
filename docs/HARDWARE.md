@@ -19,7 +19,7 @@ all work. Checked against Seeed's V1.0 schematic and KiCad files (published unde
 | 2 push buttons | Mute (also pairing) and page, each to GND. No resistors needed. |
 | Li-Po cell, 150-200 mAh, with a protection circuit | The board has no thermistor input, so the pack's protection circuit is the only guard. |
 | Power switch (optional) | In series with the cell's + wire, see [Power switch](#power-switch). |
-| Carrier board (optional) | Holds the XIAO, an OLED connector, the buzzer, two buttons, the power switch and a battery connector. Altium design files: `hardware/Altium_claude_buddy_v0.3_2026-10-22_v3.zip`. |
+| Carrier board (optional) | Holds the XIAO, an OLED connector, the buzzer, two buttons, the power switch and a battery connector. Altium design files: `hardware/Altium_claude_buddy_v0.3_2026-10-29.zip`. |
 
 Other SSD1306-family displays should work with a devicetree change in the overlay: Zephyr's SSD1306 driver also drives
 SH1106 parts.
