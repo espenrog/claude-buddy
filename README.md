@@ -8,13 +8,13 @@ intently while Claude works, grins when a turn finishes, and flashes when Claude
 > by Milos Rasic: an ESP32 desk mascot with a mechanical bell that reacts to Claude Code hooks.
 > This project takes that idea to Nordic Bluetooth LE hardware and an OLED face. See [Credits](#credits-and-license).
 
-```
-   chill          working         excited         needs you        limit hit
- ┌────────┐     ┌────────┐      ┌────────┐      ┌────────┐       ┌────────┐
- │ ██  ██ │     │  ██  ██│      │ \ /\ / │      │ >\ /< ▒│       │ ┌─ ! ─┐│
- │ ██  ██ │     │  ██  ██│      │ / \/ \ │      │ >/ \< ▒│       │ │  !  ││
- └────────┘     └────────┘      └────────┘      └────────┘       └────────┘
-```
+<table>
+  <tr><td align="center"><img src="docs/images/faces/sleeping.png" width="200" alt="asleep"><br><sub>asleep</sub></td><td align="center"><img src="docs/images/faces/chill.png" width="200" alt="chill"><br><sub>chill</sub></td><td align="center"><img src="docs/images/faces/working.png" width="200" alt="working"><br><sub>working</sub></td><td align="center"><img src="docs/images/faces/excited.png" width="200" alt="turn finished"><br><sub>turn finished</sub></td></tr>
+  <tr><td align="center"><img src="docs/images/faces/alert.png" width="200" alt="needs you"><br><sub>needs you</sub></td><td align="center"><img src="docs/images/faces/confused.png" width="200" alt="confused (error)"><br><sub>confused (error)</sub></td><td align="center"><img src="docs/images/faces/angry.png" width="200" alt="angry (poked too much)"><br><sub>angry (poked too much)</sub></td><td align="center"><img src="docs/images/faces/limit.png" width="200" alt="usage limit hit"><br><sub>usage limit hit</sub></td></tr>
+  <tr><td align="center"><img src="docs/images/faces/dizzy.png" width="200" alt="dizzy (shaken)"><br><sub>dizzy (shaken)</sub></td><td align="center"><img src="docs/images/faces/scared.png" width="200" alt="scared (dropped)"><br><sub>scared (dropped)</sub></td><td align="center"><img src="docs/images/faces/dollars.png" width="200" alt="over budget"><br><sub>over budget</sub></td><td align="center"><img src="docs/images/faces/stats.png" width="200" alt="stats page"><br><sub>stats page</sub></td></tr>
+</table>
+
+<sub>Drawn by the firmware's own code (<code>tools/render-faces.py</code>), pixel for pixel as on the 128x64 OLED.</sub>
 
 * **Works with whatever machine runs Claude Code.** By default the buddy talks to the machine it
   sits next to. No broker, no cloud, no accounts.

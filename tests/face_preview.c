@@ -1,4 +1,4 @@
-/* Host tool: draws every mood and the stats page as ASCII art. Usage: face_preview [mood 0-10 | name | stats]
+/* Host tool: draws every mood and the stats page as ASCII art. Usage: face_preview [mood 0-10 | name | stats | readme]
  * Built and checked by tests/test_web.py (no overlapping or off-screen drawing crashes), handy for eyeballing changes. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +28,25 @@ int main(int argc, char **argv)
 	struct buddy_usage some = {.flags = 1, .month_pct = 42, .has_amounts = true, .month_cents = 8421, .today_cents = 305};
 	struct buddy_usage big = {.flags = 0, .has_amounts = true, .month_cents = 123456789, .today_cents = 65535};
 	const char *what = argc > 1 ? argv[1] : "all";
+
+	if (strcmp(what, "readme") == 0) {
+		/* The pictures in the README (tools/render-faces.py): one session, so no session squares. */
+		struct mood_summary one = {.active = 1};
+		static const enum mood shown[] = {MOOD_SLEEPING, MOOD_CHILL, MOOD_WORKING, MOOD_EXCITED, MOOD_ALERT,
+						  MOOD_CONFUSED, MOOD_ANGRY, MOOD_LIMIT, MOOD_DIZZY, MOOD_SCARED};
+
+		for (size_t i = 0; i < sizeof(shown) / sizeof(shown[0]); i++) {
+			face_render(fb, shown[i], 1000, true, &one, 0, &none, BATTERY_OK);
+			dump(fb, names[shown[i]]);
+		}
+		face_render(fb, MOOD_CHILL, 1000, true, &one, 0, &over, BATTERY_OK);
+		dump(fb, "dollars");
+		face_render(fb, MOOD_CHILL, 1000, false, &one, 0, &none, BATTERY_OK);
+		dump(fb, "dead");
+		face_render_stats(fb, &some, true);
+		dump(fb, "stats");
+		return 0;
+	}
 
 	for (int m = 0; m <= MOOD_SCARED; m++) {
 		if (strcmp(what, "all") != 0 && !(what[0] >= '0' && what[0] <= '9' && atoi(what) == m) &&
