@@ -69,7 +69,12 @@ A Nordic development kit with an SH1106 OLED; nine moods; local and relay modes;
 
 ## v1.0: ready for other people
 * Enclosure (3D-printable), bill of materials, photographed build guide.
-* Release checklist, including a license check for any prebuilt firmware.
+* Release checklist.
+* **Firmware stays source-only:** releases are tags with the source, no prebuilt `.hex` or update zip. A prebuilt image
+  would carry the publisher's public key in MCUboot, so its owner could only install updates signed by that publisher,
+  not their own builds (see [BRINGUP.md](BRINGUP.md), step 1). It would also bundle Nordic's Bluetooth controller and
+  fuel gauge libraries (Nordic 5-Clause license) with this GPL-3.0 code, which needs a linking exception in the license
+  first. Revisit only if both are solved.
 
 ## Open questions
 * **Transcript files are not a source:** `~/.claude/projects/**/*.jsonl` is an internal format that changes between versions.
