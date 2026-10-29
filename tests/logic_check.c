@@ -67,6 +67,24 @@ next:
 	CHECK(face_next_change_ms(MOOD_CHILL, 3800, false, BATTERY_LOW) == 200);
 }
 
+/* Without a link the face is dead, except bored and asleep, which look the same with or without one. */
+static void check_dead_face(void)
+{
+	static uint8_t on[FACE_FB_SIZE], off[FACE_FB_SIZE];
+	struct mood_summary none = {0};
+	struct buddy_usage usage = {0};
+
+	for (int m = 0; m <= MOOD_SCARED; m++) {
+		for (int64_t t = 0; t < 8000; t += 700) {
+			face_render(on, (enum mood)m, t, true, &none, 0, &usage, BATTERY_OK);
+			face_render(off, (enum mood)m, t, false, &none, 0, &usage, BATTERY_OK);
+			bool same = memcmp(on, off, sizeof(on)) == 0;
+
+			CHECK(same == (m == MOOD_BORED || m == MOOD_SLEEPING));
+		}
+	}
+}
+
 static void check_sounds(void)
 {
 	for (int id = 0; id < SOUND_COUNT; id++) {
@@ -293,6 +311,7 @@ static void check_clock(void)
 int main(void)
 {
 	check_face_timing();
+	check_dead_face();
 	check_sounds();
 	check_clock();
 	check_battery();

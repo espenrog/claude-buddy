@@ -56,7 +56,8 @@ only images signed with your key. Protocol details: [PROTOCOL.md](PROTOCOL.md#fi
 * Serial log (the SAMD11's UART bridge: `/dev/ttyACM*` on Linux, a COM port on Windows, 115200 baud): `Name: Claude Buddy
   A1B2`, `Pairing window open for 120 s` (while nothing is paired), `Advertising`, then `Connected`, and `Event 0x03` and
   `Mood 1 -> 3` for each event. `Failed to initialize chip` or `No accelerometer` early on is harmless on a plain XIAO.
-* The OLED shows the face, with X eyes while no bridge is connected.
+* The OLED shows the face, with X eyes while no bridge is connected (except when the buddy is bored or asleep: those
+  faces stay as they are, so a central that connects for a moment does not make the face flicker).
 * The buttons as listed in [HARDWARE.md](HARDWARE.md#pins).
 
 ## Code layout

@@ -15,7 +15,7 @@
 #define BUDDY_PROTOCOL_VERSION 2
 #define BUDDY_FW_VERSION_MAJOR 0
 #define BUDDY_FW_VERSION_MINOR 8
-#define BUDDY_FW_VERSION_PATCH 13
+#define BUDDY_FW_VERSION_PATCH 14
 
 /* Capability bits, the fourth byte of the version characteristic. */
 /* 0x01 is not used (it was a "restart into a firmware loader" command on an earlier board). */

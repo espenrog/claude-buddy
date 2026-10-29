@@ -594,7 +594,12 @@ void face_render(uint8_t *fb, enum mood mood, int64_t t_ms, bool connected,
 	style = profile;
 	memset(fb, 0, FACE_FB_SIZE);
 
-	if (!connected) {
+	/*
+	 * No bridge: the dead face, except once the buddy is bored or asleep. Nothing can happen then without a bridge, and
+	 * a central that connects for a moment (a PC reconnecting to a paired buddy, a bridge that is refused) would
+	 * otherwise flip the face between dead and bored.
+	 */
+	if (!connected && mood != MOOD_BORED && mood != MOOD_SLEEPING) {
 		draw_dead_face(fb);
 		draw_sessions(fb, sessions, t_ms);
 		if (battery >= BATTERY_LOW && low_icon_on(t_ms)) {
