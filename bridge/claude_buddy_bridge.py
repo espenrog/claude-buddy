@@ -423,15 +423,18 @@ def submit(text, queue, slots=None):
 
 class UsageStore:
     """Estimated spend, kept in a small state file. The month total is the sum of each session's largest cost
-    seen, so missed updates, restarts and several bridges all agree. Calibration is an offset on that sum."""
+    seen, so missed updates, restarts and several bridges all agree. Calibration ties that sum to the figure the Claude app
+    shows: the estimate at that moment becomes the app's number, and spend after it is scaled by the ratio between how
+    much the app's figure and the estimate grew since the previous calibration (1.0 until there are two)."""
 
     SAVE_EVERY = 10  # seconds between disk writes
+    MIN_SPAN = 5.0  # usd of estimated spend between two calibrations before the ratio is trusted
 
     def __init__(self, path=None, now=time.time):
         self.path, self.now = path, now
         self.sessions = {}  # id -> {"max": usd, "month": "YYYY-MM", "day": "YYYY-MM-DD", "day_start": usd, "ctx": percent}
         self.budget = {"monthly_usd": 0.0, "warn_pct": 80}
-        self.offsets = {}  # "YYYY-MM" -> usd added by calibration
+        self.calib = {}  # "YYYY-MM" -> {"raw": estimate when calibrated, "real": the app's figure, "factor": scale for later spend}
         self.dirty, self.saved_at = False, 0.0
         self.load()
 
@@ -447,7 +450,9 @@ class UsageStore:
                 data = json.load(f)
             self.sessions = {k: v for k, v in data.get("sessions", {}).items() if isinstance(v, dict)}
             self.budget.update(data.get("budget", {}))
-            self.offsets = data.get("offsets", {})
+            self.calib = {m: c for m, c in data.get("calib", {}).items() if isinstance(c, dict)}
+            for m, off in data.get("offsets", {}).items():  # older state files: a plain offset is a calibration at raw 0
+                self.calib.setdefault(m, {"raw": 0.0, "real": float(off), "factor": 1.0})
         except (OSError, ValueError):
             pass
 
@@ -463,7 +468,7 @@ class UsageStore:
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"sessions": keep, "budget": self.budget, "offsets": self.offsets}, f)
+                json.dump({"sessions": keep, "budget": self.budget, "calib": self.calib}, f)
             os.replace(tmp, self.path)
             self.dirty, self.saved_at = False, self.now()
         except OSError as exc:
@@ -497,7 +502,16 @@ class UsageStore:
     def month_usd(self):
         month, _ = self._stamp()
         raw = sum(v["max"] for v in self.sessions.values() if v.get("month") == month)
-        return raw, raw + self.offsets.get(month, 0.0)
+        c = self.calib.get(month)
+        if not c:
+            return raw, raw
+        return raw, c["real"] + max(0.0, raw - c["raw"]) * c["factor"]
+
+    def _last_factor(self, month):
+        """The scale from this month's calibration, else from the latest earlier month's, else 1.0."""
+        for m in sorted((m for m in self.calib if m <= month), reverse=True):
+            return self.calib[m]["factor"]
+        return 1.0
 
     def today_usd(self):
         _, day = self._stamp()
@@ -508,7 +522,11 @@ class UsageStore:
             raise ValueError("month_usd must be a number between 0 and 1000000")
         month, _ = self._stamp()
         raw, _ = self.month_usd()
-        self.offsets[month] = round(float(month_usd) - raw, 4)
+        prev = self.calib.get(month)
+        factor = self._last_factor(month)
+        if prev and raw - prev["raw"] >= self.MIN_SPAN and month_usd > prev["real"]:  # enough spend to measure the ratio
+            factor = min(5.0, max(0.5, (month_usd - prev["real"]) / (raw - prev["raw"])))
+        self.calib[month] = {"raw": round(raw, 4), "real": round(float(month_usd), 4), "factor": round(factor, 4)}
         self.save(force=True)
 
     def set_budget(self, monthly_usd, warn_pct):
@@ -534,7 +552,7 @@ class UsageStore:
         return bytes([2, flags, pct]) + month.to_bytes(4, "little") + today.to_bytes(2, "little")
 
     def snapshot(self):
-        if not self.sessions and not self.offsets and not self.budget["monthly_usd"]:
+        if not self.sessions and not self.calib and not self.budget["monthly_usd"]:
             return None
         _, month = self.month_usd()
         limit = self.budget["monthly_usd"]

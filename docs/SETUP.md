@@ -136,4 +136,7 @@ refresh. The installer asks whether to track spending (or pass `--spending yes`)
 * The bridge keeps the totals in `~/.local/share/claude-buddy/usage.json` and shows them on the web page: this month,
   today, the context window, and a budget bar. The month total is the sum of each session's highest cost seen.
 * The numbers are estimates at list prices. Claude Code does not know what your plan or company actually bills. If the
-  Claude app shows a total, type it into "Set this month's total" on the web page to line the two up.
+  Claude app shows a total (Settings, Usage), type it into "Set this month's total" on the web page. The first time this
+  just lines the two up. Each later time, once the estimate has grown by at least US$5, the buddy works out the ratio
+  between how much the app's figure and the estimate grew, and scales new spend by it (limited to 0.5 to 5).
+  Spend that never reaches the bridge (other machines, the chat apps) is picked up the same way, as a higher ratio.

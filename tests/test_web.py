@@ -126,6 +126,32 @@ class UsageStoreTests(unittest.TestCase):
         u.record("a", 11.0)
         self.assertEqual(u.snapshot()["month_usd"], 15.96)
 
+    def test_calibration_learns_the_ratio_from_two_figures(self):
+        u = self.store()
+        u.record("a", 100.0)
+        u.calibrate(140.0)  # first time: no ratio yet, spend after it counts at list price
+        u.record("a", 110.0)
+        self.assertEqual(u.snapshot()["month_usd"], 150.0)
+        u.calibrate(158.0)  # the app grew 18 while the estimate grew 10
+        self.assertEqual(u.calib[u._stamp()[0]]["factor"], 1.8)
+        u.record("a", 120.0)
+        self.assertEqual(u.snapshot()["month_usd"], 176.0)
+        u.calibrate(176.0)  # the app's figure grew exactly as predicted: the ratio is confirmed
+        self.assertEqual(u.calib[u._stamp()[0]]["factor"], 1.8)
+        u.record("a", 122.0)  # two dollars of spend: too little to measure a ratio from
+        u.calibrate(180.0)
+        self.assertEqual(u.calib[u._stamp()[0]]["factor"], 1.8)
+
+    def test_old_offsets_still_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "usage.json")
+            u = self.store(path)
+            month = u._stamp()[0]
+            with open(path, "w") as f:
+                json.dump({"sessions": {"a": {"max": 10.0, "month": month, "day": u._stamp()[1], "day_start": 0.0}},
+                           "offsets": {month: 4.96}}, f)
+            self.assertEqual(self.store(path).snapshot()["month_usd"], 14.96)
+
     def test_budget_warning(self):
         u = self.store()
         u.set_budget(100, 80)
