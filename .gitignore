@@ -1,0 +1,11 @@
+build/
+__pycache__/
+*.pyc
+*.hex
+config.json
+mqtt-password
+
+# Private board files (pin choices from confidential schematics) and signing keys must never be committed
+*.pem
+private/
+*.private.overlay

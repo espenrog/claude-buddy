@@ -1,0 +1,11 @@
+/*
+ * MCUboot has no kernel, so it cannot use the board's power chip (an I2C device with a work queue) or its enable
+ * regulator. Leave both to the application. tools/build-xiao.sh passes this file to the MCUboot image:
+ *   -Dmcuboot_EXTRA_DTC_OVERLAY_FILE=<path to this file>
+ * (Not sysbuild/mcuboot.overlay: that would replace MCUboot's own overlay, and MCUboot would be linked at the
+ * application's address.)
+ */
+
+/delete-node/ &pmic;
+/delete-node/ &pmic_i2c;
+/delete-node/ &power_en;

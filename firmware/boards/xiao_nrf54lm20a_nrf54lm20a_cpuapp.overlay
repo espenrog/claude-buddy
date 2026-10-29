@@ -1,0 +1,183 @@
+/*
+ * Seeed XIAO nRF54LM20A: display, buzzer and buttons on the XIAO header pins, and the board's nPM1300 as the battery gauge.
+ *
+ *   D4 (P1.03) SDA and D5 (P1.07) SCL  SH1106 128x64 OLED, I2C address 0x3c (the board's default XIAO I2C pins)
+ *   D3 (P1.29)                         passive piezo buzzer to GND, PWM21 (optional)
+ *   D2 (P1.30) button "mute"           to GND, internal pull-up (button 2 in main.c)
+ *   D1 (P1.31) button "page"           to GND, internal pull-up (button 3 in main.c)
+ * D0..D3 are the header pins with no default peripheral, so the board's uart21 (D6/D7), spi23 (D8..D10) and i2c22 stay usable.
+ *   The board's own user button (P0.09) is button 1 (poke).
+ * The display's supply comes from the XIAO's 3V3 pin, ground from a GND pin.
+ */
+
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/regulator/npm13xx.h>
+
+&pinctrl {
+	pwm21_default: pwm21_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 29)>;
+		};
+	};
+
+	pwm21_sleep: pwm21_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 29)>;
+			low-power-enable;
+		};
+	};
+};
+
+&i2c22 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	/* One display row is 1 control byte + 128 data bytes in a single transfer. */
+	zephyr,concat-buf-size = <256>;
+	zephyr,flash-buf-max-size = <256>;
+
+	oled: sh1106@3c {
+		compatible = "sinowealth,sh1106";
+		reg = <0x3c>;
+		width = <128>;
+		height = <64>;
+		segment-offset = <2>;
+		page-offset = <0>;
+		display-offset = <0>;
+		multiplex-ratio = <63>;
+		segment-remap;
+		com-invdir;
+		prechargep = <0x22>;
+	};
+};
+
+/* The board file selects Zephyr's own Bluetooth controller, which does not build in the SDK: use Nordic's. */
+&bt_hci_controller {
+	status = "disabled";
+};
+
+&bt_hci_sdc {
+	status = "okay";
+};
+
+/* What Nordic's controller needs; the XIAO board file does not enable it. */
+&radio {
+	status = "okay";
+};
+
+&clock {
+	status = "okay";
+};
+
+&xo {
+	status = "okay";
+};
+
+&lfclk {
+	status = "okay";
+};
+
+&xo24m {
+	status = "okay";
+};
+
+/*
+ * The board file puts the nPM1300's I2C on P1.15/P1.16, but Seeed's schematic (V1.0) has PMIC_SDA on P1.18 and PMIC_SCL
+ * on P1.17 (4.7k pull-ups on the board). Without this the power chip is never found and there is no battery gauge.
+ */
+&pmic_i2c {
+	sda-gpios = <&gpio1 18 GPIO_ACTIVE_HIGH>;
+	scl-gpios = <&gpio1 17 GPIO_ACTIVE_HIGH>;
+};
+
+/*
+ * The power chip's LED outputs drive the board's charge LEDs, which light at their reset default (Seeed's schematic: LED1
+ * charging, LED0 charge failure), which can cost a few mA. Host mode leaves them off.
+ */
+&pmic {
+	npm1300_leds: leds {
+		compatible = "nordic,npm1300-led";
+		nordic,led0-mode = "host";
+		nordic,led1-mode = "host";
+		nordic,led2-mode = "host";
+	};
+};
+
+/*
+ * Charge current for the planned LP402030 cell (200 mAh): 100 mA is 0.5C, the usual standard charge rate. The board file's
+ * 150 mA would be 0.75C. The board has no cell thermistor input (NTC has a fixed 10 k to ground), so the charger cannot
+ * stop for temperature; a gentler current makes up for some of that.
+ */
+&pmic_charger {
+	current-microamp = <100000>;
+};
+
+/*
+ * The accelerometer (LSM6DS3TR-C on i2c30, INT1 on P0.06) and the microphone run from the power chip's LDO1. The board
+ * file sets it to 1.8 V, but the nRF's pins are at 3.3 V (VSYS_3V3) and the sensor's I2C pull-ups go to its own supply.
+ * Going by the schematic (not measured), the nRF then cannot read a 1.8 V "high" (0.7 x VDD = 2.3 V), and its 3.3 V
+ * outputs drive the sensor's pins above its supply. 3.3 V suits both sides (the sensor takes 1.71 to 3.6 V).
+ */
+&pmic {
+	regulators {
+		LDO1 {
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <NPM13XX_LDSW_MODE_LDO>;
+		};
+	};
+};
+
+/*
+ * The RGB LED on P1.22/23/24 lights when its pin is low, but the board file declares it active high. The LED driver, which
+ * the fuel gauge pulls in, then drives the pins low as "off" and the LED stays lit: confirmed on a board, where this cost
+ * about 1.5 mA (1.75 mA idle before, 0.187 mA after). Declaring the true polarity makes "off" mean high.
+ */
+&blue_led {
+	gpios = <&gpio1 22 GPIO_ACTIVE_LOW>;
+};
+
+&red_led {
+	gpios = <&gpio1 23 GPIO_ACTIVE_LOW>;
+};
+
+&green_led {
+	gpios = <&gpio1 24 GPIO_ACTIVE_LOW>;
+};
+
+&pwm21 {
+	status = "okay";
+	pinctrl-0 = <&pwm21_default>;
+	pinctrl-1 = <&pwm21_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/ {
+	chosen {
+		zephyr,display = &oled;
+		zephyr,bt-hci = &bt_hci_sdc;
+	};
+
+	zephyr,user {
+		pwms = <&pwm21 0 PWM_HZ(2000) PWM_POLARITY_NORMAL>;
+	};
+
+	/* Added after the board's own button, so the firmware sees them as buttons 2 and 3 (see main.c). */
+	buttons {
+		ext_button_mute: button_1 {
+			gpios = <&gpio1 30 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Mute";
+			zephyr,code = <INPUT_KEY_1>;
+		};
+
+		ext_button_page: button_2 {
+			gpios = <&gpio1 31 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Page";
+			zephyr,code = <INPUT_KEY_2>;
+		};
+	};
+
+	aliases {
+		buddy-charger = &pmic_charger;
+	};
+};

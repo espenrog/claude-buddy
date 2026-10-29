@@ -1,0 +1,63 @@
+mainmenu "Claude Buddy"
+
+config BUDDY_FUEL_GAUGE
+	bool "Battery gauge for the nPM1300 power chip"
+	default y if $(dt_alias_enabled,buddy-charger)
+	select SENSOR
+	select NRF_FUEL_GAUGE
+	imply LED
+	help
+	  Reads the cell and the charger of an nPM1300 and estimates the charge with Nordic's fuel gauge library.
+	  Turns on by itself when the board overlay defines the alias "buddy-charger" (the XIAO overlay does).
+
+config BUDDY_CELL_THERMISTOR
+	bool "The cell's thermistor is wired to the power chip's NTC pin"
+	default y
+	depends on BUDDY_FUEL_GAUGE
+	help
+	  Reports the cell's temperature (battery screen, web page). Turn it off on a board whose NTC pin has a
+	  fixed resistor instead of the cell's thermistor (the XIAO nRF54LM20A): the reading would only show that
+	  resistor, about 25 C, whatever the cell's temperature.
+
+config BUDDY_BATTERY_SIMULATION
+	bool "Accept battery readings written over Bluetooth"
+	default y if !BUDDY_FUEL_GAUGE
+	help
+	  Lets the bridge (the web page's test section) pretend there is a battery, so the battery screen
+	  and the low-battery warning can be tried on a board without a fuel gauge. Turn it off on hardware
+	  that measures a real battery.
+
+config BUDDY_SMP_UPDATE
+	bool "Accept firmware updates over Bluetooth in the application"
+	depends on BOOTLOADER_MCUBOOT
+	default y
+	select NCS_SAMPLE_MCUMGR_BT_OTA_DFU
+	select MCUMGR_GRP_OS
+	select MCUBOOT_BOOTUTIL_LIB
+	help
+	  MCUboot with two image slots, and the application itself runs the SMP server that takes the new image into the
+	  second slot. With BUDDY_REQUIRE_PAIRING the SMP service needs an encrypted link, so only a paired bridge can
+	  update. MCUboot checks the signature, swaps the images at the next restart, and swaps back if the new one does
+	  not confirm itself (smp_update.c).
+
+# The SDK's Bluetooth DFU helper makes the SMP service open to anyone; with pairing it needs the encrypted link.
+# Kconfig takes the first default whose condition holds, and this file is read before the SDK's.
+choice MCUMGR_TRANSPORT_BT_PERM
+	default MCUMGR_TRANSPORT_BT_PERM_RW_ENCRYPT if BUDDY_SMP_UPDATE && BUDDY_REQUIRE_PAIRING
+endchoice
+
+config BUDDY_REQUIRE_PAIRING
+	bool "Only talk to paired (bonded) centrals"
+	default y
+	select BT_SMP
+	select BT_SETTINGS
+	select BT_SMP_SC_PAIR_ONLY
+	select BT_SMP_APP_PAIRING_ACCEPT
+	help
+	  Every characteristic except the version needs an encrypted link. The buddy accepts a new pairing only
+	  while its pairing window is open: automatically for two minutes after boot while nothing is paired, and
+	  after holding the mute button for 3 seconds. Holding it for 8 seconds forgets every pairing.
+	  Pairing is LE Secure Connections "Just Works": it keeps strangers out, but someone attacking exactly while
+	  the window is open could still pair.
+
+source "Kconfig.zephyr"

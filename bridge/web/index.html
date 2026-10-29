@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Buddy</title>
+<style>
+  :root {
+    --bg: #f4f4f1; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #dcdcd5;
+    --accent: #c15f3c; --ok: #2e7d32; --warn: #b26a00; --bad: #b3261e; --oled: #05080a; --pixel: #e8f3ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #20201e; --text: #ececE6; --muted: #9a9a92; --line: #34342f;
+            --accent: #e08a65; --ok: #66bb6a; --warn: #ffb74d; --bad: #ef7b73; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 1.4rem; margin: 8px 0; }
+  h2 { font-size: 1rem; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .chip { padding: 4px 12px; border-radius: 999px; font-size: .9rem; border: 1px solid var(--line); background: var(--card); }
+  .chip.ok { color: var(--ok); border-color: var(--ok); } .chip.warn { color: var(--warn); border-color: var(--warn); }
+  .chip.bad { color: var(--bad); border-color: var(--bad); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 12px 0; }
+  .now { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  canvas { background: var(--oled); border-radius: 8px; width: 256px; height: 128px; image-rendering: pixelated; max-width: 100%; }
+  .mood { font-size: 1.6rem; font-weight: 600; text-transform: capitalize; }
+  .muted { color: var(--muted); } .small { font-size: .85rem; }
+  .row { display: grid; grid-template-columns: 1fr 2fr; gap: 8px 16px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .row label { font-weight: 500; } .row .hint { grid-column: 2; margin-top: -4px; }
+  @media (max-width: 520px) { .row { grid-template-columns: 1fr; } .row .hint { grid-column: 1; } }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  select, button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  button { cursor: pointer; } button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; } td { padding: 4px 8px; border-top: 1px solid var(--line); }
+  td:first-child { color: var(--muted); width: 5.5em; }
+  .bar { height: 10px; background: var(--line); border-radius: 999px; overflow: hidden; margin: 12px 0 4px; }
+  #barfill, #updatefill { height: 100%; width: 0; background: var(--ok); } #barfill.warn { background: var(--bad); }
+  input[type=number] { font: inherit; padding: 6px 8px; width: 7em; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  #msg { margin-left: 12px; } .err { color: var(--bad); } .good { color: var(--ok); }
+  footer { color: var(--muted); font-size: .8rem; text-align: center; padding: 16px 0 32px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Claude Buddy</h1>
+    <span id="chip" class="chip">connecting...</span>
+  </header>
+
+  <section class="card">
+    <h2>Now</h2>
+    <div class="now">
+      <canvas id="face" width="128" height="64"></canvas>
+      <div>
+        <div class="mood" id="mood">&nbsp;</div>
+        <div class="muted" id="sessions">&nbsp;</div>
+        <div class="muted small" id="display"></div>
+        <div class="muted" id="battery"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Settings</h2>
+    <div class="row"><label for="brightness">Brightness</label><input id="brightness" type="range" min="1" max="255"></div>
+    <div class="row"><label for="sleep_brightness">Display while asleep</label>
+      <select id="sleep_brightness">
+        <option value="0">Off</option><option value="4">Very dim</option><option value="8">Dim</option>
+        <option value="32">Medium</option><option value="128">Normal</option>
+      </select>
+      <div class="hint muted small">A poke (button 1) or any event wakes it up.</div></div>
+    <div class="row"><label for="face_profile">Eye style</label>
+      <select id="face_profile"><option value="0">Bars</option><option value="1">Rounded</option><option value="2">Rounded with highlight</option></select></div>
+    <div class="row"><label for="volume">Buzzer volume</label><input id="volume" type="range" min="0" max="100">
+      <div class="hint muted small">Only on a buddy with a buzzer. Mute and quiet hours silence it; the quiet hours follow this computer's clock.</div></div>
+    <div class="row"><label for="muted">Mute</label><input id="muted" type="checkbox"></div>
+    <div class="row"><label>Quiet hours</label>
+      <div><select id="quiet_start_h"></select> to <select id="quiet_end_h"></select></div>
+      <div class="hint muted small">The buzzer stays silent in this window. Equal hours mean never.</div></div>
+    <div style="padding-top:12px"><button id="save" class="primary" disabled>Save</button><span id="msg" class="small"></span></div>
+  </section>
+
+  <section class="card" id="spend">
+    <h2>Spending (estimate)</h2>
+    <div id="nospend" class="muted">Nothing reported yet. Install the status-line forwarder (python3 install.py, option "spending") and use Claude Code.</div>
+    <div id="spendbody" hidden>
+      <div class="now"><div class="mood" id="month">&nbsp;</div><div class="muted" id="today"></div></div>
+      <div class="bar" aria-hidden="true"><div id="barfill"></div></div>
+      <div class="muted small" id="barlabel"></div>
+      <div class="row"><label for="budget">Monthly budget (US$)</label>
+        <div><input id="budget" type="number" min="0" step="1"> <label for="warn" class="small muted">warn at</label>
+        <input id="warn" type="number" min="1" max="100" step="1" style="width:5em"> %
+        <button id="savebudget">Save</button></div>
+        <div class="hint muted small">0 turns the budget off. Above the warning level the eyes turn into dollar signs (needs firmware 0.4).</div></div>
+      <div class="row"><label for="calib">Set this month's total to (US$)</label>
+        <div><input id="calib" type="number" min="0" step="0.01"> <button id="savecalib">Set</button></div>
+        <div class="hint muted small">Claude Code only estimates cost at list prices. Type the figure your Claude app shows to line them up.</div></div>
+      <span id="spendmsg" class="small"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Try it</h2>
+    <div class="buttons" id="tests"></div>
+    <p class="muted small" style="margin-bottom:0">Sends a test event as if Claude Code had done it.</p>
+  </section>
+
+  <section class="card" id="measurecard" hidden>
+    <h2>Measure power</h2>
+    <p class="muted small">Holds the buddy in one state so you can measure its current with a power profiler on the battery
+      lead. While a mode is held the buddy ignores Claude, makes no sound of its own, and goes back to normal by itself after
+      30 minutes or on a restart. The hours it covers are marked in the battery log. To measure advertising without a
+      connection, stop the bridge while the buddy is in the mode you want.</p>
+    <div class="buttons" id="measurebtns"></div>
+    <div class="small" id="measuremsg" style="padding-top:8px"></div>
+  </section>
+
+  <details class="card" id="battest" hidden>
+    <summary class="muted">Try a battery (for a buddy without a fuel gauge)</summary>
+    <p class="muted small">Pretends there is a battery so the battery screen and the low-battery warning can be tried.
+      Only works on a firmware built with battery simulation (CONFIG_BUDDY_BATTERY_SIMULATION), or with the bridge's
+      <code>--simulate</code> mode.</p>
+    <div class="row"><label for="bpct">Charge</label><input id="bpct" type="range" min="0" max="100" value="60"></div>
+    <div class="row"><label for="bstate">State</label>
+      <select id="bstate"><option value="discharging">On battery</option><option value="charging">Charging</option>
+        <option value="full">Charged</option><option value="none">No battery</option></select></div>
+    <div style="padding-top:8px"><button id="bsend">Send</button><span id="bmsg" class="small"></span></div>
+  </details>
+
+  <section class="card" id="updatecard" hidden>
+    <h2>Firmware update</h2>
+    <p class="muted small">Choose the update file the build made (<code>dfu_application.zip</code>, or a <code>.signed.bin</code>) and
+      send it. The buddy receives the file over Bluetooth and restarts with
+      the new firmware; it stops following Claude for a minute or so. The file must be signed with the key your buddy was set up with.</p>
+    <input type="file" id="updatefile" accept=".zip,.bin">
+    <button id="uploadbtn" class="primary">Send firmware…</button>
+    <div class="bar" id="updatebar" hidden><div id="updatefill"></div></div>
+    <div id="updatemsg" class="small"></div>
+  </section>
+
+  <section class="card">
+    <h2>Recent events</h2>
+    <table id="events"></table>
+  </section>
+
+  <footer id="foot"></footer>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const MOODS = ["sleeping","chill","bored","working","excited","alert","confused","angry","limit","dizzy","scared"];
+const TESTS = [["prompt_submitted","Working"],["turn_finished","Finished"],["needs_input","Needs you"],
+               ["answered","Answered"],["error","Error"],["limit_reached","Limit"],["idle","Idle"]];
+const MEASURES = [["display_off","Display off"],["face_still","Face at rest"],["face_animated","Face animated"],
+                  ["stats","Stats page"],["battery","Battery page"],["all_lit","Everything lit"],["beep","Beep once"],
+                  ["normal","Back to normal"]];
+const FIELDS = ["brightness","sleep_brightness","face_profile","volume","quiet_start_h","quiet_end_h"];
+let dirty = false, connected = false, last = null;
+
+for (const id of ["quiet_start_h","quiet_end_h"]) {
+  for (let h = 0; h < 24; h++) $(id).add(new Option(String(h).padStart(2,"0") + ":00", h));
+}
+for (const [ev,label] of TESTS) {
+  const b = document.createElement("button"); b.textContent = label;
+  b.onclick = () => post("/api/test/" + ev).catch(() => {}); $("tests").appendChild(b);
+}
+for (const [mode,label] of MEASURES) {
+  const b = document.createElement("button"); b.textContent = label; b.dataset.mode = mode;
+  b.onclick = () => post("/api/measure", {mode}).catch(e => { $("measuremsg").textContent = e.message; $("measuremsg").className = "small err"; });
+  $("measurebtns").appendChild(b);
+}
+for (const id of [...FIELDS, "muted"]) { $(id).addEventListener("input", () => { dirty = true; $("save").disabled = !connected; }); }
+
+function post(path, body) {
+  return fetch(path, {method: "POST", headers: {"X-Claude-Buddy": "1", "Content-Type": "application/json"},
+                      body: body === undefined ? undefined : JSON.stringify(body)})
+    .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.status); return j; });
+}
+
+$("save").onclick = async () => {
+  const s = {muted: $("muted").checked};
+  for (const id of FIELDS) s[id] = parseInt($(id).value, 10);
+  try { await post("/api/settings", s); dirty = false; $("save").disabled = true; say("Saved", true); }
+  catch (e) { say(e.message, false); }
+};
+function say(t, ok) { $("msg").textContent = t; $("msg").className = "small " + (ok ? "good" : "err"); setTimeout(() => $("msg").textContent = "", 4000); }
+
+const usd = n => "$" + n.toFixed(2);
+function renderSpend(u) {
+  $("nospend").hidden = !!u; $("spendbody").hidden = !u;
+  if (!u) return;
+  $("month").textContent = "est. " + usd(u.month_usd) + " this month";
+  $("today").textContent = usd(u.today_usd) + " today" + (u.context_pct != null ? " · context " + Math.round(u.context_pct) + "% full" : "");
+  const has = u.budget_usd > 0;
+  $("barfill").style.width = has ? Math.min(100, u.budget_used_pct) + "%" : "0";
+  $("barfill").className = u.over_warning ? "warn" : "";
+  $("barlabel").textContent = has ? u.budget_used_pct + "% of " + usd(u.budget_usd) + " budget" : "No budget set";
+  if (document.activeElement !== $("budget") && document.activeElement !== $("warn")) { $("budget").value = u.budget_usd; $("warn").value = u.warn_pct; }
+}
+function spendSay(t, ok) { $("spendmsg").textContent = t; $("spendmsg").className = "small " + (ok ? "good" : "err"); setTimeout(() => $("spendmsg").textContent = "", 4000); }
+$("savebudget").onclick = () => post("/api/budget", {monthly_usd: parseFloat($("budget").value || "0"), warn_pct: parseInt($("warn").value || "80", 10)})
+  .then(r => { renderSpend(r.usage); spendSay("Saved", true); }).catch(e => spendSay(e.message, false));
+$("savecalib").onclick = () => post("/api/calibrate", {month_usd: parseFloat($("calib").value)})
+  .then(r => { renderSpend(r.usage); $("calib").value = ""; spendSay("Total set", true); }).catch(e => spendSay(e.message, false));
+
+function renderBattery(b) {
+  if (!b || !b.present) { $("battery").textContent = b ? "No battery" : ""; return; }
+  $("battery").textContent = "Battery " + b.percent + " %" + (b.charging ? " · charging" : b.full ? " · charged" : "") +
+    (b.mv ? " · " + (b.mv / 1000).toFixed(2) + " V" : "") +
+    (b.current_ma == null ? "" : " · " + (b.current_ma > 0 ? "+" : "") + b.current_ma + " mA") +
+    (b.cell_temp_c == null ? "" : " · cell " + b.cell_temp_c + " °C") +
+    (b.die_temp_c == null ? "" : " · chip " + b.die_temp_c + " °C");
+}
+$("bsend").onclick = () => {
+  const st = $("bstate").value, present = st !== "none";
+  const body = {present, charging: st === "charging", full: st === "full", percent: present ? parseInt($("bpct").value, 10) : 0,
+                mv: present ? Math.round(3300 + 9 * parseInt($("bpct").value, 10)) : 0};
+  post("/api/battery", body).then(() => { $("bmsg").textContent = " Sent"; $("bmsg").className = "small good"; })
+    .catch(e => { $("bmsg").textContent = " " + e.message; $("bmsg").className = "small err"; });
+  setTimeout(() => $("bmsg").textContent = "", 4000);
+};
+
+$("uploadbtn").onclick = async () => {
+  const f = $("updatefile").files[0];
+  const msg = (text, cls) => { $("updatemsg").textContent = text; $("updatemsg").className = "small " + cls; };
+  if (!f) { msg("Choose the update file first.", "err"); return; }
+  if (f.size > 2 * 1024 * 1024) { msg("That file is too large for a firmware update.", "err"); return; }
+  if (!confirm("Send " + f.name + " to the buddy? It does not follow Claude until the update is done.")) return;
+  try {
+    const r = await fetch("/api/update", {method: "POST", headers: {"X-Claude-Buddy": "1", "Content-Type": "application/octet-stream"},
+                                          body: await f.arrayBuffer()});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.status);
+    msg("Starting…", "");
+  } catch (e) { msg(e.message, "err"); }
+};
+
+let updateShown = false;  // the message box currently shows the bridge's update report
+function renderUpdate(u, s) {
+  const busy = !!(u && u.busy);
+  $("uploadbtn").disabled = busy || !(s.ble && s.can_update); $("updatefile").disabled = busy;
+  $("updatebar").hidden = !(u && (busy || u.state === "done") && u.state !== "searching" && u.state !== "preparing" && u.state !== "releasing");
+  $("updatefill").style.width = (u ? u.percent : 0) + "%";
+  if (u && u.state === "idle" && updateShown) { $("updatemsg").textContent = ""; updateShown = false; }
+  if (u && u.state !== "idle") { updateShown = true; $("updatemsg").textContent = u.message + (u.state === "uploading" ? " " + u.percent + " %" : ""); $("updatemsg").className = "small " + (u.state === "error" ? "err" : u.state === "done" ? "good" : ""); }
+}
+
+function setSelect(id, value) {
+  const el = $(id);
+  if (![...el.options].some(o => +o.value === value)) el.add(new Option("Custom (" + value + ")", value));
+  el.value = value;
+}
+
+function drawFace(mood) {
+  const c = $("face").getContext("2d"); c.clearRect(0, 0, 128, 64); c.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--pixel");
+  const bar = (x, y, w, h) => c.fillRect(x - w/2, y - h/2, w, h);
+  const chev = (cx, right) => { for (let i = 0; i <= 14; i++) { const x = cx + (right ? -12 + i*1.5 : 12 - i*1.5);
+      c.fillRect(x - 2, 28 - 14 + i, 4, 3); c.fillRect(x - 2, 28 + 14 - i - 2, 4, 3); } };
+  switch (mood) {
+    case "sleeping": bar(40, 30, 16, 3); bar(88, 30, 16, 3); break;
+    case "bored": bar(36, 32, 16, 12); bar(84, 32, 16, 12); break;
+    case "working": bar(46, 28, 16, 20); bar(94, 28, 16, 20); break;
+    case "excited": case "alert": chev(40, true); chev(88, false); break;
+    case "confused": bar(40, 26, 16, 26); bar(88, 34, 16, 10); break;
+    case "angry": for (let i = 0; i < 16; i++) { const t = Math.floor(i*12/16); c.fillRect(32+i, 16+t, 1, 24-t); c.fillRect(80+i, 16+(11-Math.floor(i*12/16)), 1, 24-(11-Math.floor(i*12/16))); } break;
+    case "dizzy": for (const cx of [40, 88]) { c.beginPath(); for (let k = 0; k <= 40; k++) { const a = k * Math.PI / 8, r = k / 4; c.lineTo(cx + r * Math.cos(a), 28 + r * Math.sin(a)); } c.strokeStyle = c.fillStyle; c.lineWidth = 2; c.stroke(); } break;
+    case "scared": for (const cx of [40, 88]) { c.fillRect(cx-10,15,20,2); c.fillRect(cx-10,39,20,2); c.fillRect(cx-10,15,2,26); c.fillRect(cx+8,15,2,26); c.fillRect(cx-2,26,4,4); } break;
+    case "limit": c.fillRect(0,0,128,2); c.fillRect(0,62,128,2); c.fillRect(0,0,2,64); c.fillRect(126,0,2,64); c.fillRect(61,10,6,30); c.fillRect(61,46,6,6); break;
+    default: bar(40, 28, 16, 24); bar(88, 28, 16, 24);
+  }
+}
+
+function render(s) {
+  last = s; connected = s.ble;
+  const chip = $("chip");
+  if (s.ble) { chip.textContent = (s.simulated ? "Simulated buddy" : "Connected" + (s.buddy ? " to " + s.buddy : "")) + (s.firmware ? " · firmware " + s.firmware : ""); chip.className = "chip ok"; }
+  else { chip.textContent = s.pairing_hint || "Looking for your buddy..."; chip.className = "chip warn"; }
+  $("mood").textContent = s.mood || (s.ble ? "…" : "not connected");
+  drawFace(s.mood);
+  renderSpend(s.usage);
+  renderBattery(s.battery);
+  const upd = s.update;
+  // Shown whenever the buddy can be updated, and while an update runs or reports (the buddy is not connected meanwhile).
+  $("updatecard").hidden = !(s.can_update || (upd && upd.state !== "idle"));
+  renderUpdate(upd, s);
+  $("battest").hidden = !(s.ble && s.can_simulate_battery);
+  $("measurecard").hidden = !(s.ble && s.can_measure);
+  const m_ = s.measure, label = m_ && MEASURES.find(x => x[0] === m_.mode);
+  for (const b of $("measurebtns").children) b.className = (m_ && b.dataset.mode === m_.mode) || (!m_ && b.dataset.mode === "normal") ? "primary" : "";
+  if (s.can_measure) {
+    $("measuremsg").className = "small " + (m_ ? "good" : "muted");
+    $("measuremsg").textContent = m_ ? "Held: " + (label ? label[1] : "a mode set earlier") + (m_.minutes_left != null ? " · " + m_.minutes_left + " min left" : "") : "Normal operation.";
+  }
+  const ss = s.sessions;
+  $("sessions").textContent = ss ? (ss.active === 0 ? "No Claude sessions yet" :
+      ss.active + (ss.active === 1 ? " session" : " sessions") + " · " + ss.working + " working · " + ss.waiting + " waiting for you") : "";
+  $("display").textContent = s.display_off ? "The display is off while the buddy sleeps." : "";
+  if (s.settings && !dirty) {
+    for (const id of FIELDS) { if (id === "sleep_brightness") setSelect(id, s.settings[id]); else $(id).value = s.settings[id]; }
+    $("muted").checked = s.settings.muted;
+  }
+  for (const id of [...FIELDS, "muted"]) $(id).disabled = !s.ble || !s.settings;
+  $("save").disabled = !(dirty && s.ble);
+  $("events").innerHTML = s.events.length ? s.events.map(e => "<tr><td>" + e.t + "</td><td>" + e.event.replace(/_/g," ") + "</td><td class='muted'>session " + e.slot + "</td></tr>").join("")
+                                          : "<tr><td class='muted'>Nothing yet. Events from Claude Code show up here.</td></tr>";
+  const m = Math.floor(s.uptime_s / 60);
+  $("foot").textContent = "Bridge " + s.bridge_version + " · running for " + (m >= 60 ? Math.floor(m/60) + " h " + (m%60) + " min" : m + " min");
+}
+
+async function poll() {
+  try { const r = await fetch("/api/status", {cache: "no-store"}); render(await r.json()); }
+  catch (e) { $("chip").textContent = "bridge not reachable"; $("chip").className = "chip bad"; }
+  setTimeout(poll, 1000);
+}
+poll();
+</script>
+</body>
+</html>
