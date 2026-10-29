@@ -26,7 +26,7 @@ import sys
 import time
 import zipfile
 
-BRIDGE_VERSION = "0.8.11"
+BRIDGE_VERSION = "0.8.14"
 
 SVC_UUID = "6b1d0001-5c3a-4e5b-9b2a-6c1a0d0e0001"
 EVT_UUID = "6b1d0002-5c3a-4e5b-9b2a-6c1a0d0e0001"
