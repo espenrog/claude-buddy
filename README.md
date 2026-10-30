@@ -15,7 +15,7 @@ intently while Claude works, grins when a turn finishes, and flashes when Claude
 </table>
 
 <sub>Drawn by the firmware's own code (<code>tools/render-faces.py</code>), pixel for pixel as on the 128x64 OLED.<br>
-* Needs an accelerometer: only the XIAO nRF54LM20A <b>Sense</b> has one. On the plain XIAO these two faces never show.</sub>
+*Needs an accelerometer: only the XIAO nRF54LM20A <b>Sense</b> has one. On the plain XIAO these two faces never show.</sub>
 
 * **Works with whatever machine runs Claude Code.** By default the buddy talks to the machine it
   sits next to. No broker, no cloud, no accounts.
