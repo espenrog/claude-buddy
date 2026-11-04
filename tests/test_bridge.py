@@ -223,10 +223,11 @@ class LostBuddyRestartTests(unittest.TestCase):
         self.assertEqual(self.bridge.LAUNCHD_LABEL, installer.LAUNCHD_LABEL)
         self.assertEqual(self.bridge.SYSTEMD_UNIT, f"{installer.SERVICE_NAME}.service")
 
-    def run_ble_loop(self, as_service):
-        """One link that drops at once, then no buddy in any scan. Returns the exit code, or None if it kept going."""
+    def run_ble_loop(self, as_service, version=None, links=1, writes=None):
+        """`links` links that drop at once, then no buddy in any scan. Returns the exit code, or None if it kept going."""
         import asyncio
         import types
+        bridge = self.bridge
 
         class Client:
             is_connected = False
@@ -241,9 +242,14 @@ class LostBuddyRestartTests(unittest.TestCase):
                 return False
 
             async def read_gatt_char(self, uuid):
+                if uuid == bridge.VER_UUID and version is not None:
+                    return version
                 raise RuntimeError("not on this fake")
 
-        found = iter(["buddy"])
+            async def write_gatt_char(self, uuid, data, response=False):
+                writes.append((uuid, bytes(data)))
+
+        found = iter(["buddy"] * links)
 
         async def find_buddy(name):
             await asyncio.sleep(0)
@@ -273,6 +279,21 @@ class LostBuddyRestartTests(unittest.TestCase):
 
     def test_a_bridge_started_by_hand_keeps_scanning(self):
         self.assertIsNone(self.run_ble_loop(as_service=False))
+
+    def test_unknown_slots_are_the_ones_no_session_holds(self):
+        slots = self.bridge.SessionSlots(size=4)
+        slots.slot_for("a")
+        slots.slot_for("b")
+        slots.end("a")
+        self.assertEqual(self.bridge.unknown_slots(slots), [0, 2, 3])
+
+    def test_a_new_bridge_clears_the_slots_an_earlier_one_used_once(self):
+        writes = []
+        self.bridge.SESSIONS.slot_for("current")  # slot 0 belongs to a session this bridge knows
+        self.run_ble_loop(as_service=False, version=bytes([2, 0, 8]), links=2, writes=writes)
+        ended = self.bridge.EVENT_CODES["session_ended"]
+        expected = [(self.bridge.EVT_UUID, bytes([ended, slot])) for slot in range(1, self.bridge.MAX_SESSIONS)]
+        self.assertEqual(writes, expected)  # the second link writes nothing
 
 
 class EmitSessionTests(BridgeTests):

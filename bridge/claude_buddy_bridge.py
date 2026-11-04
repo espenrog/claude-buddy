@@ -314,6 +314,12 @@ class SessionSlots:
             self.order.remove(session_id)
 
 
+def unknown_slots(slots):
+    """The firmware slots no session of this bridge holds."""
+    used = set(slots.slots.values())
+    return [slot for slot in range(slots.size) if slot not in used]
+
+
 def parse_event(text):
     """'name' or 'name:session_id' -> (name, session_id or None)."""
     name, _, session = text.strip().partition(":")
@@ -1095,6 +1101,7 @@ async def ble_loop(address, queue, settings_queue, name=None):
     from bleak import BleakClient
 
     lost_since = None  # when the link to a buddy we had dropped; None while connected or before the first link
+    fresh_process = True
     while True:
         if UPDATE.busy:  # the updater has its own connection to the buddy
             lost_since = None
@@ -1158,6 +1165,12 @@ async def ble_loop(address, queue, settings_queue, name=None):
                 usage_supported, usage_amounts, time_supported = fw >= (0, 4), fw >= (0, 5), fw >= (0, 6)
                 sent_usage, time_sent_at, log_fetched_at = None, None, None
                 log_supported = bool(version and len(version) >= 4 and version[3] & 4) and BATTERY_LOG.path is not None
+                if fresh_process and sessions_supported:
+                    # The slot map lives in memory: slots an earlier bridge used would otherwise stay working forever.
+                    for slot in unknown_slots(SESSIONS):
+                        await client.write_gatt_char(EVT_UUID, bytes([EVENT_CODES["session_ended"], slot]), response=True)
+                    log.info("cleared the session slots of an earlier bridge")
+                fresh_process = False
                 while not queue.empty():  # events from while we were away are stale
                     queue.get_nowait()
                 while client.is_connected:
