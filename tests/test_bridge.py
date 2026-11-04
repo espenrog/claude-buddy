@@ -196,6 +196,14 @@ class SessionSlotTests(unittest.TestCase):
         self.bridge.submit("prompt_submitted:two", q, slots)
         self.assertEqual([q.get_nowait() for _ in range(3)], [(0x03, 0), (0x02, 0), (0x03, 0)])  # no extra reset
 
+    def test_backlog_keeps_each_slots_last_state_so_a_finished_turn_does_not_stay_working(self):
+        backlog = [(0x06, 0), (0x07, 0), (0x06, 0), (0x04, 0), (0x01, 1), (0x03, 1), (0x07, 1)]
+        self.assertEqual(self.bridge.settle_backlog(backlog), [(0x04, 0), (0x03, 1)])
+
+    def test_backlog_orders_slots_by_their_latest_event(self):
+        self.assertEqual(self.bridge.settle_backlog([(0x03, 0), (0x03, 1), (0x04, 0)]), [(0x03, 1), (0x04, 0)])
+        self.assertEqual(self.bridge.settle_backlog([(0x07, 0)]), [])
+
     def test_firmware_protocol_1_still_works(self):
         ok, msg = self.bridge.describe_firmware(bytes([1, 0, 2]))
         self.assertTrue(ok)

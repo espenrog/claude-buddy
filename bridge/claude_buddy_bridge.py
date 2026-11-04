@@ -418,6 +418,21 @@ def submit(text, queue, slots=None):
     return True
 
 
+# Events that only trigger a short reaction on the buddy, not a session state worth replaying later.
+TRANSIENT_CODES = {EVENT_CODES["error"]}
+
+
+def settle_backlog(items):
+    """Events queued while the buddy was away -> the last state-setting event of each slot, in order.
+    Replaying everything would be stale noise, but dropping everything leaves a finished turn 'working'."""
+    last = {}
+    for code, slot in items:
+        if code not in TRANSIENT_CODES:
+            last.pop(slot, None)
+            last[slot] = code
+    return [(code, slot) for slot, code in last.items()]
+
+
 # ---------------------------------------------------------------- usage and expenses (fed by the status line)
 
 
@@ -1130,8 +1145,11 @@ async def ble_loop(address, queue, settings_queue, name=None):
                 usage_supported, usage_amounts, time_supported = fw >= (0, 4), fw >= (0, 5), fw >= (0, 6)
                 sent_usage, time_sent_at, log_fetched_at = None, None, None
                 log_supported = bool(version and len(version) >= 4 and version[3] & 4) and BATTERY_LOG.path is not None
-                while not queue.empty():  # events from while we were away are stale
-                    queue.get_nowait()
+                backlog = []
+                while not queue.empty():
+                    backlog.append(queue.get_nowait())
+                for item in settle_backlog(backlog):
+                    queue.put_nowait(item)
                 while client.is_connected:
                     if UPDATE.state == "releasing":
                         break  # the update connects to the buddy itself; leaving the context manager disconnects
