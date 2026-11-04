@@ -202,6 +202,79 @@ class SessionSlotTests(unittest.TestCase):
         self.assertIn("firmware 0.3", msg)
 
 
+class LostBuddyRestartTests(unittest.TestCase):
+    def setUp(self):
+        self.bridge = load_module(BRIDGE, "bridge_lost")
+
+    def test_only_the_installed_services_count_as_run_as_service(self):
+        missing = os.path.join(tempfile.gettempdir(), "no-such-cgroup-file")
+        self.assertTrue(self.bridge.run_as_service({"XPC_SERVICE_NAME": "io.github.claude-buddy.bridge"}, missing))
+        self.assertFalse(self.bridge.run_as_service({"XPC_SERVICE_NAME": "0"}, missing))  # a Terminal shell
+        self.assertFalse(self.bridge.run_as_service({"INVOCATION_ID": "abc"}, missing))
+        with tempfile.NamedTemporaryFile("w", suffix=".cgroup", delete=False) as f:
+            f.write("0::/user.slice/user@1000.service/app.slice/claude-buddy-bridge.service\n")
+        try:
+            self.assertTrue(self.bridge.run_as_service({}, f.name))
+        finally:
+            os.unlink(f.name)
+
+    def test_service_names_match_the_installer(self):
+        installer = load_module(os.path.join(ROOT, "install.py"), "installer_names")
+        self.assertEqual(self.bridge.LAUNCHD_LABEL, installer.LAUNCHD_LABEL)
+        self.assertEqual(self.bridge.SYSTEMD_UNIT, f"{installer.SERVICE_NAME}.service")
+
+    def run_ble_loop(self, as_service):
+        """One link that drops at once, then no buddy in any scan. Returns the exit code, or None if it kept going."""
+        import asyncio
+        import types
+
+        class Client:
+            is_connected = False
+
+            def __init__(self, device):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def read_gatt_char(self, uuid):
+                raise RuntimeError("not on this fake")
+
+        found = iter(["buddy"])
+
+        async def find_buddy(name):
+            await asyncio.sleep(0)
+            return next(found, None)
+
+        self.bridge.LOST_RESTART_S = 0
+        self.bridge.find_buddy = find_buddy
+        self.bridge.run_as_service = lambda: as_service
+        fake_bleak = types.ModuleType("bleak")
+        fake_bleak.BleakClient = Client
+        saved = sys.modules.get("bleak")
+        sys.modules["bleak"] = fake_bleak
+        try:
+            asyncio.run(asyncio.wait_for(self.bridge.ble_loop(None, asyncio.Queue(), asyncio.Queue()), 1))
+        except SystemExit as exc:
+            return exc.code
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            if saved is None:
+                sys.modules.pop("bleak", None)
+            else:
+                sys.modules["bleak"] = saved
+
+    def test_a_service_restarts_itself_when_the_buddy_does_not_come_back(self):
+        self.assertEqual(self.run_ble_loop(as_service=True), 75)
+
+    def test_a_bridge_started_by_hand_keeps_scanning(self):
+        self.assertIsNone(self.run_ble_loop(as_service=False))
+
+
 class EmitSessionTests(BridgeTests):
     """Runs against a live bridge; emit.py reads the session id from the hook's stdin."""
 

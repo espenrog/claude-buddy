@@ -1073,13 +1073,40 @@ async def secure_link(client, version):
     raise PairingNeeded(PAIRING_HINT)
 
 
+# The install.py service names: launchd and systemd start the bridge again when it exits.
+LAUNCHD_LABEL = "io.github.claude-buddy.bridge"
+SYSTEMD_UNIT = "claude-buddy-bridge.service"
+LOST_RESTART_S = 120  # a lost buddy not found again within this long: restart the bridge (when it is a service)
+
+
+def run_as_service(env=None, cgroup_path="/proc/self/cgroup"):
+    """True if launchd or systemd runs this bridge (and so restarts it when it exits)."""
+    env = os.environ if env is None else env
+    if env.get("XPC_SERVICE_NAME") == LAUNCHD_LABEL:
+        return True
+    try:
+        with open(cgroup_path, encoding="utf-8") as f:
+            return SYSTEMD_UNIT in f.read()
+    except OSError:
+        return False
+
+
 async def ble_loop(address, queue, settings_queue, name=None):
     from bleak import BleakClient
 
+    lost_since = None  # when the link to a buddy we had dropped; None while connected or before the first link
     while True:
         if UPDATE.busy:  # the updater has its own connection to the buddy
+            lost_since = None
             await asyncio.sleep(1)
             continue
+        linked = False  # set once the link is up and paired, so a buddy that refuses pairing never restarts us
+        if lost_since is not None and time.monotonic() - lost_since >= LOST_RESTART_S and run_as_service():
+            # On macOS the system can keep a link this process has lost track of; the buddy then stops advertising
+            # and no scan finds it again. Only a new process gets the link released.
+            log.warning("The buddy has not come back for %d s: restarting the bridge", LOST_RESTART_S)
+            USAGE.save(force=True)
+            raise SystemExit(75)
         try:
             if address:
                 device = address
@@ -1097,6 +1124,7 @@ async def ble_loop(address, queue, settings_queue, name=None):
                 except Exception:  # noqa: BLE001 - older firmware has no version characteristic
                     version = None
                 await secure_link(client, version)
+                linked, lost_since = True, None
                 ok, message = describe_firmware(version)
                 (log.info if ok else log.warning)("buddy: %s", message)
                 if version and len(version) >= 3:
@@ -1191,6 +1219,8 @@ async def ble_loop(address, queue, settings_queue, name=None):
             log.error("BLE error: %r", exc)
             await asyncio.sleep(3)
         finally:
+            if linked:
+                lost_since = time.monotonic()
             STATE.reset_link()
 
 
