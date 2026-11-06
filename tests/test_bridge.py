@@ -198,7 +198,16 @@ class SessionSlotTests(unittest.TestCase):
 
     def test_backlog_keeps_each_slots_last_state_so_a_finished_turn_does_not_stay_working(self):
         backlog = [(0x06, 0), (0x07, 0), (0x06, 0), (0x04, 0), (0x01, 1), (0x03, 1), (0x07, 1)]
-        self.assertEqual(self.bridge.settle_backlog(backlog), [(0x04, 0), (0x03, 1)])
+        self.assertEqual(self.bridge.settle_backlog(backlog), [(0x04, 0), (0x01, 1), (0x03, 1)])
+
+    def test_backlog_resets_a_recycled_slot_before_its_last_event(self):
+        # The old owner left slot 0 at needs_input; replaying only idle would keep that alert on the buddy.
+        backlog = [(0x01, 0), (0x03, 0), (0x09, 0)]
+        self.assertEqual(self.bridge.settle_backlog(backlog), [(0x01, 0), (0x09, 0)])
+
+    def test_backlog_does_not_double_a_reset_that_is_the_last_event(self):
+        self.assertEqual(self.bridge.settle_backlog([(0x03, 0), (0x02, 0)]), [(0x02, 0)])
+        self.assertEqual(self.bridge.settle_backlog([(0x02, 0), (0x01, 0)]), [(0x01, 0)])
 
     def test_backlog_orders_slots_by_their_latest_event(self):
         self.assertEqual(self.bridge.settle_backlog([(0x03, 0), (0x03, 1), (0x04, 0)]), [(0x03, 1), (0x04, 0)])
@@ -270,8 +279,12 @@ class LostBuddyRestartTests(unittest.TestCase):
         fake_bleak.BleakClient = Client
         saved = sys.modules.get("bleak")
         sys.modules["bleak"] = fake_bleak
+        async def run():
+            # Python 3.9 binds a Queue to the current loop when it is created, so create them inside it.
+            await asyncio.wait_for(self.bridge.ble_loop(None, asyncio.Queue(), asyncio.Queue()), 1)
+
         try:
-            asyncio.run(asyncio.wait_for(self.bridge.ble_loop(None, asyncio.Queue(), asyncio.Queue()), 1))
+            asyncio.run(run())
         except SystemExit as exc:
             return exc.code
         except asyncio.TimeoutError:

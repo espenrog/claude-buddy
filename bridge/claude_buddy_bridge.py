@@ -426,17 +426,29 @@ def submit(text, queue, slots=None):
 
 # Events that only trigger a short reaction on the buddy, not a session state worth replaying later.
 TRANSIENT_CODES = {EVENT_CODES["error"]}
+# Events that clear the whole slot on the buddy (mood_on_event memsets it); the others only change some flags.
+RESET_CODES = {EVENT_CODES["session_started"], EVENT_CODES["session_ended"]}
 
 
 def settle_backlog(items):
     """Events queued while the buddy was away -> the last state-setting event of each slot, in order.
-    Replaying everything would be stale noise, but dropping everything leaves a finished turn 'working'."""
-    last = {}
+    Replaying everything would be stale noise, but dropping everything leaves a finished turn 'working'.
+    A slot that was reset in the backlog gets one session_started before its last event, so a previous
+    owner's flags (such as needs_input) do not survive on the buddy."""
+    last, reset = {}, set()
     for code, slot in items:
-        if code not in TRANSIENT_CODES:
-            last.pop(slot, None)
-            last[slot] = code
-    return [(code, slot) for slot, code in last.items()]
+        if code in TRANSIENT_CODES:
+            continue
+        if code in RESET_CODES:
+            reset.add(slot)
+        last.pop(slot, None)
+        last[slot] = code
+    out = []
+    for slot, code in last.items():
+        if slot in reset and code not in RESET_CODES:
+            out.append((EVENT_CODES["session_started"], slot))
+        out.append((code, slot))
+    return out
 
 
 # ---------------------------------------------------------------- usage and expenses (fed by the status line)
