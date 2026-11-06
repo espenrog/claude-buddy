@@ -196,6 +196,41 @@ class SessionSlotTests(unittest.TestCase):
         self.bridge.submit("prompt_submitted:two", q, slots)
         self.assertEqual([q.get_nowait() for _ in range(3)], [(0x03, 0), (0x02, 0), (0x03, 0)])  # no extra reset
 
+    def repeat_filter(self):
+        clock = [100.0]
+        return self.bridge.RepeatFilter(now=lambda: clock[0]), clock
+
+    def test_a_repeated_state_is_not_written_again(self):
+        f, _ = self.repeat_filter()
+        self.assertEqual([f.wanted(code, 0) for code in (0x03, 0x06, 0x06, 0x06, 0x04)],
+                         [True, True, False, False, True])
+
+    def test_repeats_are_tracked_per_slot(self):
+        f, _ = self.repeat_filter()
+        self.assertTrue(f.wanted(0x06, 0))
+        self.assertTrue(f.wanted(0x06, 1))
+        self.assertFalse(f.wanted(0x06, 0))
+
+    def test_errors_are_always_written(self):
+        f, _ = self.repeat_filter()
+        self.assertTrue(f.wanted(0x07, 0))
+        self.assertTrue(f.wanted(0x07, 0))
+
+    def test_a_repeat_is_written_again_after_the_refresh_interval(self):
+        f, clock = self.repeat_filter()
+        self.assertTrue(f.wanted(0x06, 0))
+        clock[0] += f.REFRESH_S - 1
+        self.assertFalse(f.wanted(0x06, 0))
+        clock[0] += 1
+        self.assertTrue(f.wanted(0x06, 0))
+
+    def test_limit_reached_resets_every_slot(self):
+        f, _ = self.repeat_filter()
+        f.wanted(0x06, 0)
+        f.wanted(0x06, 1)
+        self.assertTrue(f.wanted(0x08, 1))
+        self.assertTrue(f.wanted(0x06, 0))  # the limit stopped slot 0 on the buddy too
+
     def test_firmware_protocol_1_still_works(self):
         ok, msg = self.bridge.describe_firmware(bytes([1, 0, 2]))
         self.assertTrue(ok)
