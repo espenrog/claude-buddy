@@ -314,6 +314,12 @@ class SessionSlots:
             self.order.remove(session_id)
 
 
+def unknown_slots(slots):
+    """The firmware slots no session of this bridge holds."""
+    used = set(slots.slots.values())
+    return [slot for slot in range(slots.size) if slot not in used]
+
+
 def parse_event(text):
     """'name' or 'name:session_id' -> (name, session_id or None)."""
     name, _, session = text.strip().partition(":")
@@ -416,6 +422,33 @@ def submit(text, queue, slots=None):
     if name == "session_ended":
         slots.end(session or "manual")
     return True
+
+
+# Events that only trigger a short reaction on the buddy, not a session state worth replaying later.
+TRANSIENT_CODES = {EVENT_CODES["error"]}
+# Events that clear the whole slot on the buddy (mood_on_event memsets it); the others only change some flags.
+RESET_CODES = {EVENT_CODES["session_started"], EVENT_CODES["session_ended"]}
+
+
+def settle_backlog(items):
+    """Events queued while the buddy was away -> the last state-setting event of each slot, in order.
+    Replaying everything would be stale noise, but dropping everything leaves a finished turn 'working'.
+    A slot that was reset in the backlog gets one session_started before its last event, so a previous
+    owner's flags (such as needs_input) do not survive on the buddy."""
+    last, reset = {}, set()
+    for code, slot in items:
+        if code in TRANSIENT_CODES:
+            continue
+        if code in RESET_CODES:
+            reset.add(slot)
+        last.pop(slot, None)
+        last[slot] = code
+    out = []
+    for slot, code in last.items():
+        if slot in reset and code not in RESET_CODES:
+            out.append((EVENT_CODES["session_started"], slot))
+        out.append((code, slot))
+    return out
 
 
 # ---------------------------------------------------------------- usage and expenses (fed by the status line)
@@ -1073,13 +1106,41 @@ async def secure_link(client, version):
     raise PairingNeeded(PAIRING_HINT)
 
 
+# The install.py service names: launchd and systemd start the bridge again when it exits.
+LAUNCHD_LABEL = "io.github.claude-buddy.bridge"
+SYSTEMD_UNIT = "claude-buddy-bridge.service"
+LOST_RESTART_S = 120  # a lost buddy not found again within this long: restart the bridge (when it is a service)
+
+
+def run_as_service(env=None, cgroup_path="/proc/self/cgroup"):
+    """True if launchd or systemd runs this bridge (and so restarts it when it exits)."""
+    env = os.environ if env is None else env
+    if env.get("XPC_SERVICE_NAME") == LAUNCHD_LABEL:
+        return True
+    try:
+        with open(cgroup_path, encoding="utf-8") as f:
+            return SYSTEMD_UNIT in f.read()
+    except OSError:
+        return False
+
+
 async def ble_loop(address, queue, settings_queue, name=None):
     from bleak import BleakClient
 
+    lost_since = None  # when the link to a buddy we had dropped; None while connected or before the first link
+    fresh_process = True
     while True:
         if UPDATE.busy:  # the updater has its own connection to the buddy
+            lost_since = None
             await asyncio.sleep(1)
             continue
+        linked = False  # set once the link is up and paired, so a buddy that refuses pairing never restarts us
+        if lost_since is not None and time.monotonic() - lost_since >= LOST_RESTART_S and run_as_service():
+            # On macOS the system can keep a link this process has lost track of; the buddy then stops advertising
+            # and no scan finds it again. Only a new process gets the link released.
+            log.warning("The buddy has not come back for %d s: restarting the bridge", LOST_RESTART_S)
+            USAGE.save(force=True)
+            raise SystemExit(75)
         try:
             if address:
                 device = address
@@ -1097,6 +1158,7 @@ async def ble_loop(address, queue, settings_queue, name=None):
                 except Exception:  # noqa: BLE001 - older firmware has no version characteristic
                     version = None
                 await secure_link(client, version)
+                linked, lost_since = True, None
                 ok, message = describe_firmware(version)
                 (log.info if ok else log.warning)("buddy: %s", message)
                 if version and len(version) >= 3:
@@ -1130,8 +1192,17 @@ async def ble_loop(address, queue, settings_queue, name=None):
                 usage_supported, usage_amounts, time_supported = fw >= (0, 4), fw >= (0, 5), fw >= (0, 6)
                 sent_usage, time_sent_at, log_fetched_at = None, None, None
                 log_supported = bool(version and len(version) >= 4 and version[3] & 4) and BATTERY_LOG.path is not None
-                while not queue.empty():  # events from while we were away are stale
-                    queue.get_nowait()
+                if fresh_process and sessions_supported:
+                    # The slot map lives in memory: slots an earlier bridge used would otherwise stay working forever.
+                    for slot in unknown_slots(SESSIONS):
+                        await client.write_gatt_char(EVT_UUID, bytes([EVENT_CODES["session_ended"], slot]), response=True)
+                    log.info("cleared the session slots of an earlier bridge")
+                fresh_process = False
+                backlog = []
+                while not queue.empty():
+                    backlog.append(queue.get_nowait())
+                for item in settle_backlog(backlog):
+                    queue.put_nowait(item)
                 while client.is_connected:
                     if UPDATE.state == "releasing":
                         break  # the update connects to the buddy itself; leaving the context manager disconnects
@@ -1191,6 +1262,8 @@ async def ble_loop(address, queue, settings_queue, name=None):
             log.error("BLE error: %r", exc)
             await asyncio.sleep(3)
         finally:
+            if linked:
+                lost_since = time.monotonic()
             STATE.reset_link()
 
 

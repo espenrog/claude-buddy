@@ -196,10 +196,125 @@ class SessionSlotTests(unittest.TestCase):
         self.bridge.submit("prompt_submitted:two", q, slots)
         self.assertEqual([q.get_nowait() for _ in range(3)], [(0x03, 0), (0x02, 0), (0x03, 0)])  # no extra reset
 
+    def test_backlog_keeps_each_slots_last_state_so_a_finished_turn_does_not_stay_working(self):
+        backlog = [(0x06, 0), (0x07, 0), (0x06, 0), (0x04, 0), (0x01, 1), (0x03, 1), (0x07, 1)]
+        self.assertEqual(self.bridge.settle_backlog(backlog), [(0x04, 0), (0x01, 1), (0x03, 1)])
+
+    def test_backlog_resets_a_recycled_slot_before_its_last_event(self):
+        # The old owner left slot 0 at needs_input; replaying only idle would keep that alert on the buddy.
+        backlog = [(0x01, 0), (0x03, 0), (0x09, 0)]
+        self.assertEqual(self.bridge.settle_backlog(backlog), [(0x01, 0), (0x09, 0)])
+
+    def test_backlog_does_not_double_a_reset_that_is_the_last_event(self):
+        self.assertEqual(self.bridge.settle_backlog([(0x03, 0), (0x02, 0)]), [(0x02, 0)])
+        self.assertEqual(self.bridge.settle_backlog([(0x02, 0), (0x01, 0)]), [(0x01, 0)])
+
+    def test_backlog_orders_slots_by_their_latest_event(self):
+        self.assertEqual(self.bridge.settle_backlog([(0x03, 0), (0x03, 1), (0x04, 0)]), [(0x03, 1), (0x04, 0)])
+        self.assertEqual(self.bridge.settle_backlog([(0x07, 0)]), [])
+
     def test_firmware_protocol_1_still_works(self):
         ok, msg = self.bridge.describe_firmware(bytes([1, 0, 2]))
         self.assertTrue(ok)
         self.assertIn("firmware 0.3", msg)
+
+
+class LostBuddyRestartTests(unittest.TestCase):
+    def setUp(self):
+        self.bridge = load_module(BRIDGE, "bridge_lost")
+
+    def test_only_the_installed_services_count_as_run_as_service(self):
+        missing = os.path.join(tempfile.gettempdir(), "no-such-cgroup-file")
+        self.assertTrue(self.bridge.run_as_service({"XPC_SERVICE_NAME": "io.github.claude-buddy.bridge"}, missing))
+        self.assertFalse(self.bridge.run_as_service({"XPC_SERVICE_NAME": "0"}, missing))  # a Terminal shell
+        self.assertFalse(self.bridge.run_as_service({"INVOCATION_ID": "abc"}, missing))
+        with tempfile.NamedTemporaryFile("w", suffix=".cgroup", delete=False) as f:
+            f.write("0::/user.slice/user@1000.service/app.slice/claude-buddy-bridge.service\n")
+        try:
+            self.assertTrue(self.bridge.run_as_service({}, f.name))
+        finally:
+            os.unlink(f.name)
+
+    def test_service_names_match_the_installer(self):
+        installer = load_module(os.path.join(ROOT, "install.py"), "installer_names")
+        self.assertEqual(self.bridge.LAUNCHD_LABEL, installer.LAUNCHD_LABEL)
+        self.assertEqual(self.bridge.SYSTEMD_UNIT, f"{installer.SERVICE_NAME}.service")
+
+    def run_ble_loop(self, as_service, version=None, links=1, writes=None):
+        """`links` links that drop at once, then no buddy in any scan. Returns the exit code, or None if it kept going."""
+        import asyncio
+        import types
+        bridge = self.bridge
+
+        class Client:
+            is_connected = False
+
+            def __init__(self, device):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def read_gatt_char(self, uuid):
+                if uuid == bridge.VER_UUID and version is not None:
+                    return version
+                raise RuntimeError("not on this fake")
+
+            async def write_gatt_char(self, uuid, data, response=False):
+                writes.append((uuid, bytes(data)))
+
+        found = iter(["buddy"] * links)
+
+        async def find_buddy(name):
+            await asyncio.sleep(0)
+            return next(found, None)
+
+        self.bridge.LOST_RESTART_S = 0
+        self.bridge.find_buddy = find_buddy
+        self.bridge.run_as_service = lambda: as_service
+        fake_bleak = types.ModuleType("bleak")
+        fake_bleak.BleakClient = Client
+        saved = sys.modules.get("bleak")
+        sys.modules["bleak"] = fake_bleak
+        async def run():
+            # Python 3.9 binds a Queue to the current loop when it is created, so create them inside it.
+            await asyncio.wait_for(self.bridge.ble_loop(None, asyncio.Queue(), asyncio.Queue()), 1)
+
+        try:
+            asyncio.run(run())
+        except SystemExit as exc:
+            return exc.code
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            if saved is None:
+                sys.modules.pop("bleak", None)
+            else:
+                sys.modules["bleak"] = saved
+
+    def test_a_service_restarts_itself_when_the_buddy_does_not_come_back(self):
+        self.assertEqual(self.run_ble_loop(as_service=True), 75)
+
+    def test_a_bridge_started_by_hand_keeps_scanning(self):
+        self.assertIsNone(self.run_ble_loop(as_service=False))
+
+    def test_unknown_slots_are_the_ones_no_session_holds(self):
+        slots = self.bridge.SessionSlots(size=4)
+        slots.slot_for("a")
+        slots.slot_for("b")
+        slots.end("a")
+        self.assertEqual(self.bridge.unknown_slots(slots), [0, 2, 3])
+
+    def test_a_new_bridge_clears_the_slots_an_earlier_one_used_once(self):
+        writes = []
+        self.bridge.SESSIONS.slot_for("current")  # slot 0 belongs to a session this bridge knows
+        self.run_ble_loop(as_service=False, version=bytes([2, 0, 8]), links=2, writes=writes)
+        ended = self.bridge.EVENT_CODES["session_ended"]
+        expected = [(self.bridge.EVT_UUID, bytes([ended, slot])) for slot in range(1, self.bridge.MAX_SESSIONS)]
+        self.assertEqual(writes, expected)  # the second link writes nothing
 
 
 class EmitSessionTests(BridgeTests):
