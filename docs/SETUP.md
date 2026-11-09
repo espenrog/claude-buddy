@@ -5,7 +5,7 @@ what it is about to do, and asks before changing anything.
 
 Two programs work together:
 
-* **Claude Code** runs a tiny command (a *hook*) whenever something happens.
+* **Claude Code**, or optionally **GitHub Copilot**, runs a tiny command (a *hook*) whenever something happens.
 * The **bridge** receives those messages and sends them to the buddy over Bluetooth.
 
 If both are on the same computer, that is all there is. If not, a small **relay** carries the messages between machines.
@@ -39,6 +39,49 @@ The installer asks you to pick one. **Option 1 is the default.**
 Press Enter at the first question, read the summary, press Enter again. The installer installs the hooks, creates a
 Python environment with the Bluetooth library, and registers the bridge to start at login. Power the buddy and you're done.
 No broker, nothing exposed to the network: the bridge listens on `127.0.0.1` only.
+
+### GitHub Copilot (optional)
+
+The installer offers personal Copilot hooks, off by default on a new install. Enable them alongside Claude Code with:
+
+```bash
+python3 install.py --copilot yes
+```
+
+For **Copilot only**, with the buddy on the same computer:
+
+```bash
+python3 install.py --yes --claude no --copilot yes
+```
+
+The seven hooks live in `~/.copilot/hooks/claude-buddy.json` and apply to **all local projects**.
+If `COPILOT_HOME` is set, the installer uses `$COPILOT_HOME/hooks/claude-buddy.json` instead; run Copilot and the
+installer with the same setting. This requires a Copilot runtime supporting user-level hook files.
+In VS Code, select the **Copilot** session target (not the older Local target).
+Start a new session after installing. Hooks on this computer do not configure cloud or remote sessions.
+
+| Copilot hook | Buddy event |
+|---|---|
+| `SessionStart` | `session_started` |
+| `UserPromptSubmit` | `prompt_submitted` |
+| `PreToolUse`, `PostToolUse` | `answered` (working; clears a previous waiting state) |
+| `PostToolUseFailure` | `error` |
+| `Stop` | `turn_finished` |
+| `SessionEnd` | `session_ended` |
+
+PascalCase event names intentionally select Copilot's compatible `session_id` payload, so the existing `emit.py`
+preserves each session's identity. Hooks return no permission decisions and never auto-approve tools.
+This integration covers activity, completion and tool errors; it does not currently indicate permission/input
+prompts, rate limits, or Copilot spending. Claude Code's spending integration remains separate.
+See the [Copilot hook reference](https://docs.github.com/en/copilot/reference/hooks-reference).
+
+Copilot uses the same HTTP or MQTT transport as Claude Code. For a remote-agent setup, pass
+`--claude no --copilot yes --buddy no` with the relay options on the machine running Copilot; choose option 2 on
+the machine next to the buddy.
+
+Re-running the installer remembers your choice. `--copilot no` removes only Buddy's Copilot entries; `--uninstall`
+also removes them. Other hook files and user entries are kept. Existing hook files are backed up before installation,
+and malformed files are rejected without overwriting them.
 
 ### Options 3 and 4: hosting the relay
 
@@ -80,6 +123,7 @@ No buddy at hand? `bridge.py --simulate` pretends to be one, so you can try the 
 | `~/.config/claude-buddy/config.json` | Your answers, and the relay password if any (mode 600) |
 | `~/.local/share/claude-buddy/` | The bridge, its web page, `emit.py` and a Python virtual environment |
 | `~/.claude/settings.json` | 12 hooks (timestamped backup `settings.json.claude-buddy-*.bak` first; your own hooks are left alone) |
+| `~/.copilot/hooks/claude-buddy.json` | Optional: 7 personal Copilot hooks (or under `COPILOT_HOME`); existing file backed up first |
 | Autostart | Linux: a systemd *user* service. macOS: a launchd agent. Windows: a scheduled task that runs at logon, even on battery, and restarts on failure |
 | Docker | Only when you host a relay: a container named `claude-buddy-mqtt` |
 
