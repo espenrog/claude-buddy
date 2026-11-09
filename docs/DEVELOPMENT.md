@@ -25,7 +25,7 @@ Four things must agree, so changes that touch one usually touch the others:
 
 | If you change | Also update |
 |---|---|
-| An event code | `firmware/src/mood.h`, `bridge/claude_buddy_bridge.py` (`EVENT_CODES`), `docs/PROTOCOL.md`, `install.py` (`HOOKS`) |
+| An event code | `firmware/src/mood.h`, `bridge/claude_buddy_bridge.py` (`EVENT_CODES`), `docs/PROTOCOL.md`, `install.py` (`HOOKS`, `COPILOT_HOOKS`) |
 | The BLE service | firmware, bridge, `docs/PROTOCOL.md`, and bump the protocol version once it exists |
 | A config key | `install.py`, bridge, `hooks/emit.py`, `docs/SETUP.md` |
 | Wiring or pins | the board overlay and `docs/HARDWARE.md` |

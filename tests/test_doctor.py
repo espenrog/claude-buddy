@@ -80,7 +80,8 @@ class DoctorTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = self.tmp.name
-        self.env = dict(os.environ, HOME=self.home, USERPROFILE=self.home)
+        self.env = dict(os.environ, HOME=self.home, USERPROFILE=self.home,
+                        COPILOT_HOME=os.path.join(self.home, ".copilot"))
         self.port = free_port()
         subprocess.run([sys.executable, INSTALL, "--yes", "--claude", "yes", "--buddy", "no", "--relay", "join",
                         "--relay-host", "127.0.0.1"],
@@ -130,26 +131,64 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("run: python3 install.py", result.stdout)
 
+    def install_copilot(self):
+        os.remove(os.path.join(self.home, ".claude", "settings.json"))
+        subprocess.run([sys.executable, INSTALL, "--yes", "--claude", "no", "--copilot", "yes",
+                        "--buddy", "no", "--relay", "join", "--relay-host", "127.0.0.1"],
+                       env=dict(self.env, CLAUDE_BUDDY_RELAY_PASSWORD="x"), check=True, capture_output=True)
+        with open(self.config, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg.update({"hook_transport": "http", "http_port": self.port})
+        with open(self.config, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+        return os.path.join(self.home, ".copilot", "hooks", "claude-buddy.json")
+
+    def test_copilot_only_install_checks_hooks_and_transport(self):
+        self.install_copilot()
+        result = self.doctor()
+        self.assertIn("[ OK ] 7 Copilot hooks", result.stdout)
+        self.assertIn("nothing is listening", result.stdout)
+        self.assertEqual(result.returncode, 1)
+
+    def test_missing_copilot_hooks_are_reported(self):
+        path = self.install_copilot()
+        os.remove(path)
+        result = self.doctor()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Copilot hooks are missing", result.stdout)
+        self.assertIn("--copilot yes", result.stdout)
+
+    def test_wrong_copilot_mapping_is_reported_even_with_seven_hooks(self):
+        path = self.install_copilot()
+        with open(path, encoding="utf-8") as f:
+            settings = json.load(f)
+        settings["hooks"]["Stop"][0]["command"] += " wrong"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(settings, f)
+        result = self.doctor()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Copilot hooks are missing or differ", result.stdout)
+
 
 @unittest.skipIf(sys.platform == "win32", "password prompt needs a console on Windows")
 class MenuTests(unittest.TestCase):
     def test_choosing_option_3_with_an_existing_relay(self):
         with tempfile.TemporaryDirectory() as home:
-            env = dict(os.environ, HOME=home, USERPROFILE=home)
-            answers = "3\ny\nrelay.example.org\n\n\nsecret\nn\n\ny\n"
+            env = dict(os.environ, HOME=home, USERPROFILE=home, COPILOT_HOME=os.path.join(home, ".copilot"))
+            answers = "3\ny\nn\nrelay.example.org\n\n\nsecret\nn\n\ny\n"
             result = subprocess.run([sys.executable, INSTALL, "--no-service"], input=answers, env=env,
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("This is what I am going to do", result.stdout)
             with open(os.path.join(home, ".config", "claude-buddy", "config.json"), encoding="utf-8") as f:
                 cfg = json.load(f)
-            self.assertEqual(cfg["roles"], {"claude": True, "buddy": False, "relay": "join"})
+            self.assertEqual(cfg["roles"], {"claude": True, "copilot": False, "buddy": False, "relay": "join"})
             self.assertEqual(cfg["relay"]["host"], "relay.example.org")
 
     def test_declining_the_summary_changes_nothing(self):
         with tempfile.TemporaryDirectory() as home:
-            env = dict(os.environ, HOME=home, USERPROFILE=home)
-            result = subprocess.run([sys.executable, INSTALL, "--no-service"], input="1\n\nn\n", env=env,
+            env = dict(os.environ, HOME=home, USERPROFILE=home, COPILOT_HOME=os.path.join(home, ".copilot"))
+            result = subprocess.run([sys.executable, INSTALL, "--no-service"], input="1\nn\n\nn\n", env=env,
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Nothing was changed", result.stdout)
@@ -163,7 +202,7 @@ if __name__ == "__main__":
 class StaleInstallTests(unittest.TestCase):
     def test_doctor_warns_when_installed_files_differ_from_the_checkout(self):
         with tempfile.TemporaryDirectory() as home:
-            env = dict(os.environ, HOME=home, USERPROFILE=home)
+            env = dict(os.environ, HOME=home, USERPROFILE=home, COPILOT_HOME=os.path.join(home, ".copilot"))
             subprocess.run([sys.executable, INSTALL, "--yes", "--claude", "yes", "--buddy", "no", "--relay", "join",
                             "--relay-host", "127.0.0.1"], env=dict(env, CLAUDE_BUDDY_RELAY_PASSWORD="x"), check=True,
                            capture_output=True)
@@ -176,7 +215,7 @@ class StaleInstallTests(unittest.TestCase):
 
     def test_doctor_works_with_an_old_installed_emit_without_the_probe(self):
         with tempfile.TemporaryDirectory() as home:
-            env = dict(os.environ, HOME=home, USERPROFILE=home)
+            env = dict(os.environ, HOME=home, USERPROFILE=home, COPILOT_HOME=os.path.join(home, ".copilot"))
             subprocess.run([sys.executable, INSTALL, "--yes", "--claude", "yes", "--buddy", "no", "--relay", "join",
                             "--relay-host", "127.0.0.1"], env=dict(env, CLAUDE_BUDDY_RELAY_PASSWORD="x"), check=True,
                            capture_output=True)

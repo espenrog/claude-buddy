@@ -6,8 +6,8 @@
     python3 install.py --doctor     check every part and explain what is wrong
     python3 install.py --uninstall  remove hooks and services (add --purge to also delete config)
 
-The installer asks where Claude Code runs and where the buddy sits, then sets up only what that
-needs. The default (Claude Code and the buddy on the same machine) uses no broker at all.
+The installer asks where the coding agent runs and where the buddy sits, then sets up only what
+that needs. Claude Code is the default; Copilot hooks are optional. A local setup needs no broker.
 """
 
 import argparse
@@ -31,6 +31,8 @@ CONFIG_DIR = HOME / ".config" / "claude-buddy"
 CONFIG = CONFIG_DIR / "config.json"
 DATA_DIR = HOME / ".local" / "share" / "claude-buddy"
 SETTINGS = HOME / ".claude" / "settings.json"
+COPILOT_HOME = Path(os.environ.get("COPILOT_HOME") or HOME / ".copilot")
+COPILOT_HOOK_FILE = COPILOT_HOME / "hooks" / "claude-buddy.json"
 
 SYSTEM = platform.system()  # Linux, Darwin, Windows
 SERVICE_NAME = "claude-buddy-bridge"
@@ -58,6 +60,17 @@ HOOKS = [
      "|model_not_found|server_error|max_output_tokens|unknown", "error"),
     ("SessionStart", "", "session_started"),
     ("SessionEnd", "", "session_ended"),
+]
+
+# PascalCase selects the session_id payload understood by emit.py.
+COPILOT_HOOKS = [
+    ("SessionStart", "session_started"),
+    ("UserPromptSubmit", "prompt_submitted"),
+    ("PreToolUse", "answered"),
+    ("PostToolUse", "answered"),
+    ("PostToolUseFailure", "error"),
+    ("Stop", "turn_finished"),
+    ("SessionEnd", "session_ended"),
 ]
 
 
@@ -192,6 +205,77 @@ def remove_hooks():
     strip_our_hooks(settings)
     SETTINGS.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     say(f"  removed Claude Buddy hooks from {SETTINGS}")
+
+
+def load_copilot_hooks():
+    if not COPILOT_HOOK_FILE.exists():
+        return {"version": 1, "hooks": {}}
+    try:
+        settings = json.loads(COPILOT_HOOK_FILE.read_text(encoding="utf-8"))
+    except ValueError:
+        die(f"{COPILOT_HOOK_FILE} is not valid JSON; fix it first (nothing was changed).")
+    if (not isinstance(settings, dict) or settings.get("version") != 1
+            or not isinstance(settings.get("hooks"), dict)
+            or any(not isinstance(entries, list) or any(
+                not isinstance(h, dict) or not isinstance(h.get("command", ""), str) for h in entries)
+                for entries in settings["hooks"].values())):
+        die(f"{COPILOT_HOOK_FILE} is not a version 1 hook file; fix it first (nothing was changed).")
+    return settings
+
+
+def strip_copilot_hooks(settings):
+    for name in list(settings["hooks"]):
+        remaining = [h for h in settings["hooks"][name] if not is_ours(h)]
+        if remaining:
+            settings["hooks"][name] = remaining
+        else:
+            del settings["hooks"][name]
+
+
+def copilot_hook(event):
+    py = Path(sys.executable).as_posix().replace("'", "''")
+    emit = (DATA_DIR / "emit.py").as_posix().replace("'", "''")
+    return {
+        "type": "command",
+        "command": hook_command(event),
+        "powershell": f"& '{py}' '{emit}' {event}",
+        "timeoutSec": 5,
+    }
+
+
+def install_copilot_hooks():
+    settings = load_copilot_hooks()
+    if COPILOT_HOOK_FILE.exists():
+        backup = COPILOT_HOOK_FILE.with_name(
+            f"claude-buddy.json.{time.strftime('%Y%m%d-%H%M%S')}.bak")
+        shutil.copy2(COPILOT_HOOK_FILE, backup)
+        say(f"  backed up {COPILOT_HOOK_FILE.name} -> {backup.name}")
+    strip_copilot_hooks(settings)
+    for name, event in COPILOT_HOOKS:
+        settings["hooks"].setdefault(name, []).append(copilot_hook(event))
+    COPILOT_HOOK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    COPILOT_HOOK_FILE.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    say(f"  installed {len(COPILOT_HOOKS)} Copilot hooks in {COPILOT_HOOK_FILE}")
+
+
+def remove_copilot_hooks():
+    if not COPILOT_HOOK_FILE.exists():
+        return
+    settings = load_copilot_hooks()
+    strip_copilot_hooks(settings)
+    if not settings["hooks"] and set(settings) <= {"version", "hooks"}:
+        COPILOT_HOOK_FILE.unlink()
+    else:
+        COPILOT_HOOK_FILE.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    say(f"  removed Claude Buddy hooks from {COPILOT_HOOK_FILE}")
+
+
+def previous_copilot():
+    try:
+        cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+        return cfg.get("roles", {}).get("copilot", COPILOT_HOOK_FILE.exists())
+    except (OSError, ValueError):
+        return COPILOT_HOOK_FILE.exists()
 
 
 def statusline_command():
@@ -460,6 +544,9 @@ def cmd_status():
     settings = load_settings() if SETTINGS.exists() else {}
     n = sum(1 for g in settings.get("hooks", {}).values() for grp in g for h in grp.get("hooks", []) if is_ours(h))
     say(f"Hooks:   {n} Claude Buddy hooks in {SETTINGS}")
+    copilot = load_copilot_hooks()
+    n = sum(1 for entries in copilot["hooks"].values() for h in entries if is_ours(h))
+    say(f"Copilot: {n} Claude Buddy hooks in {COPILOT_HOOK_FILE}")
     say(f"Bridge:  {service_state()}")
     if have("docker"):
         _, out, _ = run_limited(["docker", "ps", "--filter", f"name={BROKER_CONTAINER}", "--format", "{{.Status}}"])
@@ -469,7 +556,9 @@ def cmd_status():
 
 def cmd_uninstall(purge):
     say("Removing Claude Buddy...")
+    load_copilot_hooks()
     remove_hooks()
+    remove_copilot_hooks()
     remove_statusline()
     remove_service()
     if purge:
@@ -487,11 +576,12 @@ def cmd_uninstall(purge):
 
 
 INTRO = """\
-Claude Buddy shows what Claude Code is doing on a small Bluetooth gadget (the "buddy").
+Claude Buddy shows what Claude Code or GitHub Copilot is doing on a small Bluetooth gadget (the "buddy").
 
 Two programs work together:
-  * Claude Code sends a "hook" message whenever something happens (you ask, it finishes, it needs you).
+  * Your coding agent sends a "hook" message whenever something happens.
   * The bridge receives those messages and sends them to the buddy over Bluetooth.
+The menu below describes Claude Code; Copilot can use the same local or relay setup.
 """
 
 MENU = """\
@@ -520,12 +610,13 @@ How do you want to set it up?
 
 def choose_setup(ask, args):
     """Returns (claude, buddy, relay_role) where relay_role is None, 'host' or 'join'."""
-    if args.claude is not None or args.buddy is not None or args.relay is not None:
+    if args.claude is not None or args.copilot is not None or args.buddy is not None or args.relay is not None:
         claude = True if args.claude is None else args.claude
         buddy = True if args.buddy is None else args.buddy
-        if claude and buddy:
+        agent = claude or (previous_copilot() if args.copilot is None else args.copilot)
+        if agent and buddy:
             role = "host" if args.relay in ("host",) else None
-        elif claude:
+        elif agent:
             role = "join" if args.relay == "join" else "host"
         else:
             role = "join"
@@ -549,10 +640,14 @@ def choose_setup(ask, args):
     return True, True, "host"
 
 
-def describe_plan(claude, buddy, relay_role, relay, tunnel, spending=False):
+def describe_plan(claude, buddy, relay_role, relay, tunnel, spending=False, copilot=False):
     steps = []
     if claude:
         steps.append(f"Add {len(HOOKS)} hooks to {SETTINGS} (a backup is made first; your own hooks are kept).")
+    if copilot:
+        steps.append(f"Add {len(COPILOT_HOOKS)} personal Copilot hooks to {COPILOT_HOOK_FILE} (all local projects).")
+    elif COPILOT_HOOK_FILE.exists():
+        steps.append(f"Remove Claude Buddy's Copilot hooks from {COPILOT_HOOK_FILE}.")
     if claude and spending:
         steps.append(f"Make Claude Code's status line forward its estimated cost to the buddy (any status line you have keeps working).")
     if relay_role == "host":
@@ -576,8 +671,12 @@ def cmd_install(args):
         die("Python 3.9 or newer is required.")
 
     claude, buddy, relay_role = choose_setup(ask, args)
-    if not claude and not buddy:
-        die("Nothing to install: this machine neither runs Claude Code nor hosts a buddy.")
+    copilot = previous_copilot() if args.copilot is None else args.copilot
+    if claude:
+        copilot = ask.yesno("Also install personal GitHub Copilot hooks (all local projects)?",
+                           copilot, args.copilot)
+    if not claude and not copilot and not buddy:
+        die("Nothing to install: this machine neither runs a coding agent nor hosts a buddy.")
 
     relay = {"host": "localhost", "port": 1883, "user": "claude-buddy", "password": "", "topic": DEFAULT_TOPIC}
     tunnel = {"enabled": False}
@@ -610,8 +709,8 @@ def cmd_install(args):
     use_relay = relay_role is not None
     cfg = {
         "version": 1,
-        "roles": {"claude": claude, "buddy": buddy, "relay": relay_role or "none"},
-        "hook_transport": "mqtt" if (claude and use_relay) else "http",
+        "roles": {"claude": claude, "copilot": copilot, "buddy": buddy, "relay": relay_role or "none"},
+        "hook_transport": "mqtt" if ((claude or copilot) and use_relay) else "http",
         "http_port": DEFAULT_HTTP_PORT,
         "relay": relay if use_relay else {},
         "bridge": {"inputs": ["mqtt"] if use_relay else ["http"], "ble": True, "ble_address": None, "ble_name": None,
@@ -620,12 +719,13 @@ def cmd_install(args):
     }
 
     say("\nThis is what I am going to do:")
-    for i, step in enumerate(describe_plan(claude, buddy, relay_role, relay, tunnel, spending), 1):
+    for i, step in enumerate(describe_plan(claude, buddy, relay_role, relay, tunnel, spending, copilot), 1):
         say(f"  {i}. {step}")
     if not ask.yesno("\nGo ahead?", True):
         say("Nothing was changed.")
         return
 
+    load_copilot_hooks()  # validate before changing either agent's settings
     say("\nInstalling...")
     if relay_role == "host":
         setup_broker(relay["port"], relay["user"], relay["password"])
@@ -638,6 +738,10 @@ def cmd_install(args):
                 cfg["statusline"]["chain"] = chain
         else:
             remove_statusline()  # opted out (or never in): give back the user's own status line
+    if copilot:
+        install_copilot_hooks()
+    else:
+        remove_copilot_hooks()
     write_config(cfg)
     if buddy:
         setup_venv()
@@ -654,6 +758,10 @@ def cmd_install(args):
     if claude:
         say(f"  {n}. Restart any running Claude Code session so it picks up the new hooks.")
         n += 1
+    if copilot:
+        say(f"  {n}. Start a new Copilot CLI or VS Code Copilot session so it picks up the new hooks.")
+        n += 1
+    if claude or copilot:
         say(f"  {n}. Test: {sys.executable} {DATA_DIR / 'emit.py'} prompt_submitted   (the eyes should start sweeping)")
         n += 1
     if buddy:
@@ -781,12 +889,26 @@ def cmd_doctor():
         else:
             rep.ok("status line forwards estimated spending" +
                    (" (and runs your own status line)" if cfg["statusline"].get("chain") else ""))
-    if ours and not Path(sys.executable).exists():
-        rep.fail("the Python used by the hooks no longer exists", "run: python3 install.py")
     if ours:
         say("  (Claude Code reads hooks when a session starts: restart running sessions after installing.)")
 
-    if ours:
+    say("\nGitHub Copilot hooks")
+    copilot_settings = load_copilot_hooks()
+    copilot_ours = [(name, h) for name, entries in copilot_settings["hooks"].items()
+                   for h in entries if is_ours(h)]
+    expected = [(name, copilot_hook(event)) for name, event in COPILOT_HOOKS]
+    if not copilot_ours and not roles.get("copilot"):
+        say("  (none installed on this machine)")
+    elif sorted(copilot_ours, key=lambda item: item[0]) == sorted(expected, key=lambda item: item[0]):
+        rep.ok(f"{len(copilot_ours)} Copilot hooks in {COPILOT_HOOK_FILE}")
+        say("  (start a new Copilot session after installing; in VS Code select the Copilot session target.)")
+    else:
+        rep.fail(f"Copilot hooks are missing or differ from the expected {len(COPILOT_HOOKS)} hooks",
+                 "run: python3 install.py --copilot yes")
+
+    if (ours or copilot_ours) and not Path(sys.executable).exists():
+        rep.fail("the Python used by the hooks no longer exists", "run: python3 install.py")
+    if ours or copilot_ours:
         say("\nSending events")
         if transport == "http":
             port = int(cfg.get("http_port", DEFAULT_HTTP_PORT))
@@ -876,6 +998,8 @@ def main():
     ap.add_argument("--yes", action="store_true", help="accept defaults without asking")
     ap.add_argument("--claude", type=lambda v: v.lower() in ("1", "y", "yes", "true"),
                     help="this machine runs Claude Code (yes/no)")
+    ap.add_argument("--copilot", type=lambda v: v.lower() in ("1", "y", "yes", "true"),
+                    help="install personal GitHub Copilot hooks for all local projects (yes/no)")
     ap.add_argument("--buddy", type=lambda v: v.lower() in ("1", "y", "yes", "true"),
                     help="the buddy is next to this machine (yes/no)")
     ap.add_argument("--spending", type=lambda v: v.lower() in ("1", "y", "yes", "true"),
