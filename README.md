@@ -3,6 +3,8 @@
 A tiny desk companion that shows what [Claude Code](https://claude.com/claude-code) is doing.
 A small Bluetooth LE gadget with a retro OLED face: it dozes when nothing is happening, watches
 intently while Claude works, grins when a turn finishes, and flashes when Claude needs *you*.
+Also supports local **GitHub Copilot** sessions (CLI and the VS Code Copilot session target):
+enable personal hooks with `python3 install.py --copilot yes`. See [Copilot setup](docs/SETUP.md#github-copilot-optional).
 
 > **Inspired by [ClaudeMonitorCompanion](https://github.com/MilosRasic98/ClaudeMonitorCompanion)**
 > by Milos Rasic: an ESP32 desk mascot with a mechanical bell that reacts to Claude Code hooks.
@@ -57,6 +59,7 @@ python3 install.py
 
 Press Enter to accept the default (Claude Code and the buddy on the same computer), power the buddy, and restart any running Claude Code
 session. That's it. If something doesn't work, `python3 install.py --doctor` finds out why.
+For Copilot without Claude Code, run `python3 install.py --yes --claude no --copilot yes`.
 
 ## How it works
 

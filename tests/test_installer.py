@@ -6,7 +6,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALL = os.path.join(ROOT, "install.py")
@@ -17,8 +21,9 @@ ARGS = ["--yes", "--claude", "yes", "--buddy", "no", "--relay", "join", "--relay
 def load_installer(home):
     """Imports install.py as a module, with the home directory pointed at `home`."""
     import importlib.util
-    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "COPILOT_HOME")}
     os.environ["HOME"] = os.environ["USERPROFILE"] = home
+    os.environ.pop("COPILOT_HOME", None)
     try:
         spec = importlib.util.spec_from_file_location("install_under_test", INSTALL)
         module = importlib.util.module_from_spec(spec)
@@ -37,6 +42,7 @@ class InstallerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = self.tmp.name
         self.env = dict(os.environ, HOME=self.home, USERPROFILE=self.home, CLAUDE_BUDDY_RELAY_PASSWORD="not-a-real-password")
+        self.env.pop("COPILOT_HOME", None)
         os.makedirs(os.path.join(self.home, ".claude"))
         self.settings = os.path.join(self.home, ".claude", "settings.json")
         with open(self.settings, "w", encoding="utf-8") as f:
@@ -134,6 +140,141 @@ class InstallerTests(unittest.TestCase):
         result = subprocess.run(cmd, shell=True, env=self.env, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)  # relay is unreachable: must still exit 0
 
+    def copilot_path(self):
+        return Path(self.home) / ".copilot" / "hooks" / "claude-buddy.json"
+
+    def copilot_hooks(self):
+        return json.loads(self.copilot_path().read_text(encoding="utf-8"))["hooks"]
+
+    def test_copilot_is_opt_in(self):
+        self.run_install(*ARGS)
+        self.assertFalse(self.copilot_path().exists())
+
+    def test_copilot_install_is_idempotent_and_remembers_the_choice(self):
+        self.run_install(*ARGS, "--copilot", "yes")
+        self.run_install(*ARGS)
+        hooks = self.copilot_hooks()
+        self.assertEqual(set(hooks), {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                                     "PostToolUseFailure", "Stop", "SessionEnd"})
+        self.assertTrue(all(len(entries) == 1 for entries in hooks.values()))
+        self.assertTrue(all(entries[0]["timeoutSec"] == 5 for entries in hooks.values()))
+        self.assertIn("7 Claude Buddy hooks", self.run_install("--status"))
+        backups = list(self.copilot_path().parent.glob("*.bak"))
+        self.assertTrue(backups)
+
+    def test_copilot_only_relay_install_does_not_change_claude_settings(self):
+        before = Path(self.settings).read_bytes()
+        self.run_install(*ARGS, "--claude", "no", "--copilot", "yes")
+        self.assertEqual(Path(self.settings).read_bytes(), before)
+        cfg = json.loads((Path(self.home) / ".config/claude-buddy/config.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["roles"], {"claude": False, "copilot": True, "buddy": False, "relay": "join"})
+        self.assertEqual(cfg["hook_transport"], "mqtt")
+        self.assertNotIn("statusLine", self.load())
+
+    def test_copilot_home_override_is_used(self):
+        self.env["COPILOT_HOME"] = str(Path(self.home) / "custom copilot")
+        self.run_install(*ARGS, "--copilot", "yes")
+        custom = Path(self.env["COPILOT_HOME"]) / "hooks/claude-buddy.json"
+        self.assertTrue(custom.exists())
+        self.assertFalse(self.copilot_path().exists())
+        self.run_install("--uninstall")
+        self.assertFalse(custom.exists())
+
+    def test_copilot_opt_out_and_uninstall_preserve_other_hooks(self):
+        for action in (("--copilot", "no"), ("--uninstall",)):
+            with self.subTest(action=action):
+                path = self.copilot_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                other = path.with_name("my-hooks.json")
+                other.write_text('{"version":1,"hooks":{}}\n', encoding="utf-8")
+                original = {"version": 1, "hooks": {
+                    "Stop": [{"type": "command", "command": "echo user-hook"}]}}
+                path.write_text(json.dumps(original), encoding="utf-8")
+                self.run_install(*ARGS, "--copilot", "yes")
+                self.run_install(*(action if action == ("--uninstall",) else (*ARGS, *action)))
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
+                self.assertEqual(other.read_text(encoding="utf-8"), '{"version":1,"hooks":{}}\n')
+
+    def test_uninstall_removes_owned_copilot_file(self):
+        self.run_install(*ARGS, "--copilot", "yes")
+        self.run_install("--uninstall")
+        self.assertFalse(self.copilot_path().exists())
+
+    def test_invalid_copilot_file_does_not_change_either_agents_settings(self):
+        path = self.copilot_path()
+        path.parent.mkdir(parents=True)
+        for content in ("{ invalid", "[]", '{"version":1,"hooks":{"Stop":[null]}}',
+                        '{"version":2,"hooks":{}}'):
+            with self.subTest(content=content):
+                path.write_text(content, encoding="utf-8")
+                before = Path(self.settings).read_bytes()
+                result = subprocess.run([sys.executable, INSTALL, *ARGS, "--copilot", "yes"],
+                                        env=self.env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
+                self.assertEqual(Path(self.settings).read_bytes(), before)
+
+    def test_generated_copilot_commands_forward_events_and_session_ids(self):
+        self.run_install(*ARGS, "--copilot", "yes")
+        paths = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                paths.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        config = Path(self.home) / ".config/claude-buddy/config.json"
+        config.write_text(json.dumps({"hook_transport": "http", "http_port": server.server_port}), encoding="utf-8")
+        expected = {"SessionStart": "session_started", "UserPromptSubmit": "prompt_submitted",
+                    "PreToolUse": "answered", "PostToolUse": "answered",
+                    "PostToolUseFailure": "error", "Stop": "turn_finished", "SessionEnd": "session_ended"}
+        try:
+            for name, entries in self.copilot_hooks().items():
+                for sid in ("copilot-session-one", "copilot-session-two"):
+                    entry = entries[0]
+                    command = (["powershell", "-NoProfile", "-Command", entry["powershell"]]
+                               if sys.platform == "win32" else entry["command"])
+                    result = subprocess.run(command, shell=sys.platform != "win32", env=self.env,
+                                            input=json.dumps({"hook_event_name": name, "session_id": sid}),
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout + result.stderr, "")
+                    self.assertEqual(paths[-1], f"/e/{expected[name]}/{sid}")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_copilot_only_local_setup_needs_no_relay(self):
+        inst = load_installer(self.home)
+        before = Path(self.settings).read_bytes()
+        with patch.object(sys, "argv", [INSTALL, "--yes", "--claude", "no", "--copilot", "yes", "--no-service"]), \
+                patch.object(inst, "setup_venv") as setup_venv, patch.object(inst, "setup_broker") as setup_broker:
+            inst.main()
+        cfg = json.loads(inst.CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(cfg["roles"], {"claude": False, "copilot": True, "buddy": True, "relay": "none"})
+        self.assertEqual(cfg["hook_transport"], "http")
+        self.assertEqual(cfg["bridge"]["inputs"], ["http"])
+        self.assertTrue(self.copilot_path().exists())
+        self.assertEqual(Path(self.settings).read_bytes(), before)
+        setup_venv.assert_called_once_with()
+        setup_broker.assert_not_called()
+
+    def test_powershell_command_quotes_paths_with_spaces_and_apostrophes(self):
+        inst = load_installer(self.home)
+        with patch.object(inst, "DATA_DIR", Path(self.home) / "user's buddy files"):
+            hook = inst.copilot_hook("turn_finished")
+        self.assertIn("user''s buddy files/emit.py' turn_finished", hook["powershell"])
+        self.assertTrue(hook["powershell"].startswith("& '"))
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -221,7 +362,8 @@ class RelayPasswordSecrecyTests(unittest.TestCase):
             self.inst.preset_relay_password(self.args(path))
 
     def test_there_is_no_plain_password_option(self):
-        env = dict(os.environ, HOME=self.tmp.name, USERPROFILE=self.tmp.name)
+        env = dict(os.environ, HOME=self.tmp.name, USERPROFILE=self.tmp.name,
+                   COPILOT_HOME=os.path.join(self.tmp.name, ".copilot"))
         result = subprocess.run([sys.executable, INSTALL, "--relay-password", "leaky-value", "--yes"], capture_output=True,
                                 text=True, env=env)
         self.assertNotEqual(result.returncode, 0)
