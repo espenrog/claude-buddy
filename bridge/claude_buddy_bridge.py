@@ -430,6 +430,32 @@ TRANSIENT_CODES = {EVENT_CODES["error"]}
 RESET_CODES = {EVENT_CODES["session_started"], EVENT_CODES["session_ended"]}
 
 
+class RepeatFilter:
+    """Drops events that would only repeat what a slot already shows on the buddy.
+
+    A busy agent sends 'answered' after every tool call, and each BLE write waits for the buddy's reply,
+    so writing them all builds a backlog that delays the changes that matter. A repeat still goes out
+    every REFRESH_S, so the buddy never takes a busy session for a stale one (MOOD_SESSION_STALE_MS)."""
+
+    REFRESH_S = 60
+
+    def __init__(self, now=time.monotonic):
+        self.now = now
+        self.last = {}  # slot -> (code, monotonic time written)
+
+    def wanted(self, code, slot):
+        if code in TRANSIENT_CODES:
+            return True
+        now = self.now()
+        previous = self.last.get(slot)
+        if previous and previous[0] == code and now - previous[1] < self.REFRESH_S:
+            return False
+        if code == EVENT_CODES["limit_reached"]:
+            self.last.clear()  # the buddy stops every session, so no slot shows what it did before
+        self.last[slot] = (code, now)
+        return True
+
+
 def settle_backlog(items):
     """Events queued while the buddy was away -> the last state-setting event of each slot, in order.
     Replaying everything would be stale noise, but dropping everything leaves a finished turn 'working'.
@@ -1191,6 +1217,7 @@ async def ble_loop(address, queue, settings_queue, name=None):
                         log.warning("battery status is not available (%r)", exc)
                 usage_supported, usage_amounts, time_supported = fw >= (0, 4), fw >= (0, 5), fw >= (0, 6)
                 sent_usage, time_sent_at, log_fetched_at = None, None, None
+                repeats = RepeatFilter()
                 log_supported = bool(version and len(version) >= 4 and version[3] & 4) and BATTERY_LOG.path is not None
                 if fresh_process and sessions_supported:
                     # The slot map lives in memory: slots an earlier bridge used would otherwise stay working forever.
@@ -1250,6 +1277,8 @@ async def ble_loop(address, queue, settings_queue, name=None):
                     try:
                         code, slot = await asyncio.wait_for(queue.get(), timeout=0.25)
                     except asyncio.TimeoutError:
+                        continue
+                    if not repeats.wanted(code, slot):
                         continue
                     payload = bytes([code, slot]) if sessions_supported else bytes([code])
                     await client.write_gatt_char(EVT_UUID, payload, response=True)
