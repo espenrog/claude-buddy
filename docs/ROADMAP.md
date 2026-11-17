@@ -33,6 +33,7 @@ A Nordic development kit with an SH1106 OLED; nine moods; local and relay modes;
   sum of each session's largest cost seen, so it survives missed events and several bridges agree. It resets on the 1st.
 * **Calibration:** account-level spend shown in the Claude apps (for example "$14.96 of $500") is not available to Claude Code.
   The estimate tracks it closely, and a "set current total to $X" control in the web page lets you align the two.
+  (Later: the status line can read the account's usage-credit figure directly, see SETUP.md, "Exact figure from your Claude account".)
 * **Budget and dollar eyes:** a monthly budget and warning threshold are settings; above the threshold the eyes turn into dollar signs.
 * Stats characteristic and stats screens on the OLED: connection, uptime, tokens, context fullness, cost against budget.
 

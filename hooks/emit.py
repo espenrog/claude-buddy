@@ -151,6 +151,16 @@ def send_usage(cfg, session, cost, context_pct=None):
         urllib.request.urlopen(req, timeout=1.5).close()
 
 
+def send_credits(cfg, used, limit):
+    """This month's spend and limit in US$ as the Claude account reports them, over the same transport as the events."""
+    if cfg.get("hook_transport", "http") == "mqtt":
+        send_mqtt(cfg.get("relay", {}), "credits", f"{used:g}:{limit:g}")
+    else:
+        path = f"/credits/{used:g}/{limit:g}"
+        req = urllib.request.Request(f"http://127.0.0.1:{int(cfg.get('http_port', 8787))}{path}", data=b"", method="POST")
+        urllib.request.urlopen(req, timeout=1.5).close()
+
+
 def main():
     if len(sys.argv) != 2:
         return

@@ -21,7 +21,7 @@
 uint32_t face_next_change_ms(enum mood mood, int64_t t_ms, bool dollars, enum battery_level battery);
 
 /* Renders one frame for the given mood at animation time t_ms. */
-/* `profile` selects the eye style (0 bars, 1 rounded, 2 rounded with a highlight). */
+/* `profile` selects the eye style (0 bars, 1 rounded, 2 rounded with a highlight, 3 crow, 4 beaver; 3 and 4 have no mouth). */
 void face_render(uint8_t *fb, enum mood mood, int64_t t_ms, bool connected,
 		 const struct mood_summary *sessions, uint8_t profile,
 		 const struct buddy_usage *usage, enum battery_level battery);

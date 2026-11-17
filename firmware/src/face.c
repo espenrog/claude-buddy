@@ -540,6 +540,361 @@ static void draw_sessions(uint8_t *fb, const struct mood_summary *sum, int64_t t
 	}
 }
 
+/* ---- animal eye profiles: eyes only, no mouth (the printed beak or teeth is the mouth) ---- */
+
+#define PROFILE_CROW 3
+#define PROFILE_BEAVER 4
+
+static void clear_rect(uint8_t *fb, int x, int y, int w, int h)
+{
+	for (int j = 0; j < h; j++) {
+		for (int i = 0; i < w; i++) {
+			clear_pixel(fb, x + i, y + j);
+		}
+	}
+}
+
+/* Filled ellipse with radii rx, ry (a pixel is in when its centre is within rx + 0.5, ry + 0.5); `on` false clears. */
+static void ellipse(uint8_t *fb, int cx, int cy, int rx, int ry, bool on)
+{
+	int ax = (2 * rx + 1) * (2 * rx + 1);
+	int by = (2 * ry + 1) * (2 * ry + 1);
+
+	for (int y = -ry; y <= ry; y++) {
+		for (int x = -rx; x <= rx; x++) {
+			if (4 * x * x * by + 4 * y * y * ax <= ax * by) {
+				if (on) {
+					put_pixel(fb, cx + x, cy + y);
+				} else {
+					clear_pixel(fb, cx + x, cy + y);
+				}
+			}
+		}
+	}
+}
+
+static void ring(uint8_t *fb, int cx, int cy, int r, int t)
+{
+	ellipse(fb, cx, cy, r, r, true);
+	ellipse(fb, cx, cy, r - t, r - t, false);
+}
+
+/* sin() at 64 steps per turn, times 64, from the 32-step table. */
+static int sin64(int a)
+{
+	a &= 63;
+	return (a & 1) ? (sin32[a >> 1] + sin32[((a >> 1) + 1) & 31]) / 2 : sin32[a >> 1];
+}
+
+/* Elliptic arc from a0 to a1 in 1/64 turns (0 = right, 16 = down), drawn with a thick line. */
+static void arc(uint8_t *fb, int cx, int cy, int rx, int ry, int a0, int a1, int thick)
+{
+	int px = cx + rx * sin64(a0 + 16) / 64;
+	int py = cy + ry * sin64(a0) / 64;
+
+	for (int a = a0 + 1; a <= a1; a++) {
+		int x = cx + rx * sin64(a + 16) / 64;
+		int y = cy + ry * sin64(a) / 64;
+
+		thick_line(fb, px, py, x, y, thick);
+		px = x;
+		py = y;
+	}
+}
+
+/* A small "z" for sleeping, s pixels per stroke. */
+static void zee(uint8_t *fb, int x, int y, int s)
+{
+	fill_rect(fb, x, y, 3 * s, s);
+	thick_line(fb, x + 3 * s - 1, y + s, x, y + 4 * s - 1, s);
+	fill_rect(fb, x, y + 4 * s, 3 * s, s);
+}
+
+static void invert_fb(uint8_t *fb)
+{
+	for (int i = 0; i < FACE_FB_SIZE; i++) {
+		fb[i] = (uint8_t)~fb[i];
+	}
+}
+
+/* Crow (Hugin): beady round eyes with a highlight under sharp, slightly smug brows. */
+#define CROW_L 40
+#define CROW_R 88
+#define CROW_Y 32
+#define CROW_EYE_R 10
+
+/* slant > 0 puts the inner ends lower (smug), < 0 raises them; lift moves both brows up. */
+static void crow_brows(uint8_t *fb, int dy, int slant, int lift)
+{
+	for (int e = 0; e < 2; e++) {
+		int cx = e == 0 ? CROW_L : CROW_R;
+		int s = e == 0 ? 1 : -1;
+		int yo = CROW_Y - 17 + dy - lift;
+
+		thick_line(fb, cx - 12 * s, yo - slant, cx + 11 * s, yo + slant, 3);
+	}
+}
+
+static void crow_eye(uint8_t *fb, int cx, int cy, int r, bool highlight)
+{
+	ellipse(fb, cx, cy, r, r, true);
+	if (highlight) {
+		ellipse(fb, cx - 4, cy - 4, 2, 2, false);
+	}
+}
+
+static void draw_crow(uint8_t *fb, enum mood mood, int64_t t_ms, bool dollars)
+{
+	if (dollars && (mood == MOOD_CHILL || mood == MOOD_BORED || mood == MOOD_WORKING || mood == MOOD_EXCITED)) {
+		for (int e = 0; e < 2; e++) { /* shiny coins instead of eyes */
+			int cx = e == 0 ? CROW_L : CROW_R;
+
+			ring(fb, cx, CROW_Y, 13, 2);
+			dollar(fb, cx, CROW_Y);
+		}
+		return;
+	}
+	for (int e = 0; e < 2; e++) {
+		int cx = e == 0 ? CROW_L : CROW_R;
+		int s = e == 0 ? 1 : -1;
+
+		switch (mood) {
+		case MOOD_CHILL:
+			if (blinking(t_ms)) {
+				fill_rect(fb, cx - 10, CROW_Y, 21, 2);
+			} else {
+				crow_eye(fb, cx, CROW_Y, CROW_EYE_R, true);
+			}
+			break;
+		case MOOD_BORED: { /* heavy lids, drifting gaze */
+			int dx = tri(t_ms, 6000, 16) - 8;
+
+			crow_eye(fb, cx + dx, CROW_Y, CROW_EYE_R, true);
+			clear_rect(fb, cx + dx - 12, CROW_Y - 12, 25, 11);
+			fill_rect(fb, cx + dx - 11, CROW_Y - 2, 23, 2);
+			break;
+		}
+		case MOOD_WORKING: /* pupils sweep inside ring eyes */
+			ring(fb, cx, CROW_Y, CROW_EYE_R + 1, 2);
+			ellipse(fb, cx + tri(t_ms, 1600, 10) - 5, CROW_Y + 1, 5, 5, true);
+			break;
+		case MOOD_SLEEPING:
+			arc(fb, cx, CROW_Y - 4 + tri(t_ms, 4000, 2), 10, 7, 4, 28, 3);
+			break;
+		case MOOD_EXCITED: { /* crows like shiny things: twinkling sparkles */
+			bool big = ((t_ms / 150) & 1) != 0;
+			int dy = big ? -2 : 1;
+			int a = big ? 17 : 12;
+			int b = big ? 12 : 8;
+
+			thick_line(fb, cx, CROW_Y - a + dy, cx, CROW_Y + a + dy, 3);
+			thick_line(fb, cx - b, CROW_Y + dy, cx + b, CROW_Y + dy, 3);
+			ellipse(fb, cx, CROW_Y + dy, 3, 3, true);
+			if (big) {
+				fill_rect(fb, cx + 14, CROW_Y - 13 + dy, 2, 2);
+				fill_rect(fb, cx - 15, CROW_Y + 11 + dy, 2, 2);
+			}
+			break;
+		}
+		case MOOD_ALERT:
+			ring(fb, cx, CROW_Y, 12, 2);
+			ellipse(fb, cx, CROW_Y, 5, 5, true);
+			break;
+		case MOOD_CONFUSED: { /* head tilt: one eye higher, one brow cocked */
+			int w = (int)((t_ms / 200) & 1);
+
+			if (e == 0) {
+				crow_eye(fb, cx + w, CROW_Y - 5, CROW_EYE_R, true);
+				thick_line(fb, cx - 12, CROW_Y - 24, cx + 10, CROW_Y - 27, 3);
+			} else {
+				crow_eye(fb, cx - w, CROW_Y + 4, 7, true);
+				thick_line(fb, cx - 9, CROW_Y - 8, cx + 10, CROW_Y - 9, 3);
+			}
+			break;
+		}
+		case MOOD_ANGRY:
+			crow_eye(fb, cx, CROW_Y + 2, CROW_EYE_R, false);
+			for (int i = -12; i <= 12; i++) {
+				int top = CROW_Y - 9 + (i * s + 12) * 9 / 24;
+
+				clear_rect(fb, cx + i, CROW_Y - 12, 1, top - (CROW_Y - 12));
+			}
+			thick_line(fb, cx - 13 * s, CROW_Y - 14, cx + 12 * s, CROW_Y - 4, 3);
+			break;
+		case MOOD_DIZZY:
+			spiral(fb, cx + tri(t_ms, 1200, 8) - 4, CROW_Y, (int)((t_ms / 60) & 31));
+			break;
+		case MOOD_SCARED: {
+			int dx = ((t_ms / 50) & 1) ? 1 : -1;
+
+			ring(fb, cx + dx, CROW_Y, 12, 2);
+			fill_rect(fb, cx + dx - 1, CROW_Y - 1, 3, 3);
+			break;
+		}
+		case MOOD_LIMIT:
+			break;
+		}
+	}
+	switch (mood) {
+	case MOOD_CHILL:
+		crow_brows(fb, 0, 2, 0);
+		break;
+	case MOOD_BORED:
+		crow_brows(fb, 4, 0, 0);
+		break;
+	case MOOD_WORKING:
+		crow_brows(fb, 0, 4, 0);
+		break;
+	case MOOD_SLEEPING:
+		zee(fb, 108, 12 - 2 * tri(t_ms, 4000, 2), 2);
+		break;
+	case MOOD_ALERT:
+		crow_brows(fb, -2, -2, 3);
+		if ((t_ms / 400) & 1) {
+			invert_fb(fb);
+		}
+		break;
+	case MOOD_SCARED:
+		crow_brows(fb, -3, -3, 3);
+		break;
+	case MOOD_LIMIT:
+		draw_limit(fb, t_ms);
+		break;
+	default:
+		break;
+	}
+}
+
+/* Beaver: big filled cartoon eyes with a highlight, low on the screen and close together. */
+#define BEAVER_L 49
+#define BEAVER_R 79
+#define BEAVER_Y 40
+#define BEAVER_RX 14
+#define BEAVER_RY 17
+
+static int half_floor(int v)
+{
+	return v >= 0 ? v / 2 : -((1 - v) / 2);
+}
+
+/* One eye sized from rx/ry, nudged by half of (px, py), with a 4x4 highlight cut out of its upper left. */
+static void beaver_eye(uint8_t *fb, int cx, int cy, int rx, int ry, int px, int py)
+{
+	int ex = cx + half_floor(px);
+	int ey = cy + half_floor(py);
+	int a = rx - 3;
+	int b = ry - 3;
+
+	ellipse(fb, ex, ey, a, b, true);
+	clear_rect(fb, ex - a / 2 - 1, ey - b / 2 - 2, 4, 4);
+}
+
+static void beaver_angry(uint8_t *fb, int cx, int s)
+{
+	beaver_eye(fb, cx, BEAVER_Y + 2, BEAVER_RX, BEAVER_RY - 2, 2 * s, 3);
+	for (int i = -BEAVER_RX - 1; i <= BEAVER_RX + 1; i++) {
+		int cut = (i * s + BEAVER_RX + 1) * 10 / (2 * BEAVER_RX + 2);
+
+		clear_rect(fb, cx + i, BEAVER_Y - BEAVER_RY, 1, cut + 2);
+	}
+	thick_line(fb, cx - (BEAVER_RX + 2) * s, BEAVER_Y - BEAVER_RY, cx + (BEAVER_RX + 1) * s,
+		   BEAVER_Y - BEAVER_RY + 10, 3);
+}
+
+static void draw_beaver(uint8_t *fb, enum mood mood, int64_t t_ms, bool dollars)
+{
+	if (dollars && (mood == MOOD_CHILL || mood == MOOD_BORED || mood == MOOD_WORKING || mood == MOOD_EXCITED)) {
+		for (int e = 0; e < 2; e++) { /* dollar eyes */
+			int cx = e == 0 ? BEAVER_L : BEAVER_R;
+
+			dollar(fb, cx, BEAVER_Y);
+		}
+		return;
+	}
+	for (int e = 0; e < 2; e++) {
+		int cx = e == 0 ? BEAVER_L : BEAVER_R;
+		int s = e == 0 ? 1 : -1; /* pupils lean towards the middle */
+
+		switch (mood) {
+		case MOOD_CHILL:
+			if (blinking(t_ms)) {
+				fill_rect(fb, cx - BEAVER_RX, BEAVER_Y + 2, 2 * BEAVER_RX + 1, 3);
+			} else {
+				beaver_eye(fb, cx, BEAVER_Y, BEAVER_RX, BEAVER_RY, 2 * s, 3);
+			}
+			break;
+		case MOOD_BORED:
+			beaver_eye(fb, cx, BEAVER_Y, BEAVER_RX, BEAVER_RY, tri(t_ms, 6000, 8) - 4, 6);
+			clear_rect(fb, cx - BEAVER_RX - 1, BEAVER_Y - BEAVER_RY - 1, 2 * BEAVER_RX + 3, BEAVER_RY + 1);
+			fill_rect(fb, cx - BEAVER_RX, BEAVER_Y - 1, 2 * BEAVER_RX + 1, 3);
+			break;
+		case MOOD_WORKING: { /* busy beaver: determined squint, gnawing bob */
+			int bob = (int)((t_ms / 140) & 1);
+
+			beaver_eye(fb, cx, BEAVER_Y + 4 + bob, BEAVER_RX, 9, 3 * s, 1);
+			thick_line(fb, cx - 13 * s, BEAVER_Y - 12, cx + 9 * s, BEAVER_Y - 6, 3);
+			break;
+		}
+		case MOOD_SLEEPING:
+			arc(fb, cx, BEAVER_Y + tri(t_ms, 4000, 2), BEAVER_RX - 1, 7, 3, 29, 3);
+			break;
+		case MOOD_EXCITED: /* happy ^ ^ */
+			arc(fb, cx, BEAVER_Y + 8 + (((t_ms / 120) & 1) ? 3 : -2), BEAVER_RX, BEAVER_RY - 2, 35, 61, 4);
+			break;
+		case MOOD_ALERT: /* needs you: angry, and the screen flashes */
+		case MOOD_ANGRY:
+			beaver_angry(fb, cx, s);
+			break;
+		case MOOD_CONFUSED: {
+			int w = (int)((t_ms / 200) & 1);
+
+			if (e == 0) {
+				beaver_eye(fb, cx + w, BEAVER_Y - 3, BEAVER_RX + 1, BEAVER_RY + 3, -3, -4);
+			} else {
+				beaver_eye(fb, cx - w, BEAVER_Y + 4, 8, 9, 2, 2);
+			}
+			break;
+		}
+		case MOOD_DIZZY:
+			spiral(fb, cx + tri(t_ms, 1200, 6) - 3, BEAVER_Y, (int)((t_ms / 60) & 31));
+			break;
+		case MOOD_SCARED: {
+			int dx = ((t_ms / 50) & 1) ? 1 : -1;
+
+			ellipse(fb, cx + dx, BEAVER_Y - 4, 4, 5, true);
+			clear_rect(fb, cx + dx - 2, BEAVER_Y - 7, 2, 2);
+			break;
+		}
+		case MOOD_LIMIT:
+			break;
+		}
+	}
+	switch (mood) {
+	case MOOD_WORKING: /* wood chips flying out of the bottom corners, just above the printed teeth */
+		for (int k = 0; k < 4; k++) {
+			int ph = (int)((t_ms / 90 + k * 5) % 20);
+			int s = (k & 1) ? 1 : -1;
+
+			fill_rect(fb, 64 + s * (22 + ph * 2), 62 - ph * 2 + ph * ph / 8, 2, 2);
+		}
+		break;
+	case MOOD_SLEEPING:
+		zee(fb, 96, 18 - 2 * tri(t_ms, 4000, 2), 2);
+		zee(fb, 108, 8 - tri(t_ms, 4000, 2), 1);
+		break;
+	case MOOD_ALERT:
+		if ((t_ms / 400) & 1) {
+			invert_fb(fb);
+		}
+		break;
+	case MOOD_LIMIT:
+		draw_limit(fb, t_ms);
+		break;
+	default:
+		break;
+	}
+}
+
 static uint32_t face_still_change_ms(enum mood mood, int64_t t_ms, bool dollars)
 {
 	switch (mood) {
@@ -600,11 +955,31 @@ void face_render(uint8_t *fb, enum mood mood, int64_t t_ms, bool connected,
 	 * otherwise flip the face between dead and bored.
 	 */
 	if (!connected && mood != MOOD_BORED && mood != MOOD_SLEEPING) {
-		draw_dead_face(fb);
+		if (style == PROFILE_CROW || style == PROFILE_BEAVER) { /* crossed-out eyes, no mouth */
+			int y = style == PROFILE_CROW ? CROW_Y : BEAVER_Y;
+
+			cross(fb, style == PROFILE_CROW ? CROW_L : BEAVER_L, y);
+			cross(fb, style == PROFILE_CROW ? CROW_R : BEAVER_R, y);
+		} else {
+			draw_dead_face(fb);
+		}
 		draw_sessions(fb, sessions, t_ms);
 		if (battery >= BATTERY_LOW && low_icon_on(t_ms)) {
 			draw_battery_icon(fb, FACE_WIDTH - 24, 2, 14, 7,
 					  battery == BATTERY_CRITICAL ? 0 : 20);
+		}
+		return;
+	}
+
+	if (style == PROFILE_CROW || style == PROFILE_BEAVER) {
+		if (style == PROFILE_CROW) {
+			draw_crow(fb, mood, t_ms, dollars);
+		} else {
+			draw_beaver(fb, mood, t_ms, dollars);
+		}
+		draw_sessions(fb, sessions, t_ms);
+		if (battery >= BATTERY_LOW && low_icon_on(t_ms)) {
+			draw_battery_icon(fb, FACE_WIDTH - 24, 2, 14, 7, battery == BATTERY_CRITICAL ? 0 : 20);
 		}
 		return;
 	}

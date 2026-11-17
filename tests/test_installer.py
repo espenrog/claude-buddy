@@ -85,7 +85,7 @@ class InstallerTests(unittest.TestCase):
         line = self.load()["statusLine"]
         self.assertIn("statusline.py", line["command"])
         with open(os.path.join(self.home, ".config", "claude-buddy", "config.json"), encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["statusline"], {"enabled": True, "chain": "echo my-own-line"})
+            self.assertEqual(json.load(f)["statusline"], {"enabled": True, "account": False, "chain": "echo my-own-line"})
         self.run_install(*ARGS, "--spending", "no")
         self.assertEqual(self.load()["statusLine"]["command"], "echo my-own-line")
 

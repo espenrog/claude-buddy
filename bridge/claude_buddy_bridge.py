@@ -63,7 +63,7 @@ EVENT_CODES = {
 
 # Index = value in the buddy's status characteristic. Must match enum mood in firmware/src/mood.h.
 MOOD_NAMES = ["sleeping", "chill", "bored", "working", "excited", "alert", "confused", "angry", "limit", "dizzy", "scared"]
-FACE_PROFILES = 3
+FACE_PROFILES = 5
 
 log = logging.getLogger("claude-buddy")
 
@@ -484,7 +484,11 @@ class UsageStore:
     """Estimated spend, kept in a small state file. The month total is the sum of each session's largest cost
     seen, so missed updates, restarts and several bridges all agree. Calibration ties that sum to the figure the Claude app
     shows: the estimate at that moment becomes the app's number, and spend after it is scaled by the ratio between how
-    much the app's figure and the estimate grew since the previous calibration (1.0 until there are two)."""
+    much the app's figure and the estimate grew since the previous calibration (1.0 until there are two).
+
+    When the status line also forwards the Claude account's own figure (record_account), that replaces the estimate for the
+    month: the total is the account's last figure plus whatever the estimate grew since it arrived, and the account's
+    limit is the budget. Today is the growth of the account's figure since the last one before midnight."""
 
     SAVE_EVERY = 10  # seconds between disk writes
     MIN_SPAN = 5.0  # usd of estimated spend between two calibrations before the ratio is trusted
@@ -494,6 +498,8 @@ class UsageStore:
         self.sessions = {}  # id -> {"max": usd, "month": "YYYY-MM", "day": "YYYY-MM-DD", "day_start": usd, "ctx": percent}
         self.budget = {"monthly_usd": 0.0, "warn_pct": 80}
         self.calib = {}  # "YYYY-MM" -> {"raw": estimate when calibrated, "real": the app's figure, "factor": scale for later spend}
+        # "YYYY-MM" -> {"used", "limit": usd, "at": time, "raw": estimate then, "day": "YYYY-MM-DD", "day_start": used at midnight}
+        self.account = {}
         self.dirty, self.saved_at = False, 0.0
         self.load()
 
@@ -512,6 +518,7 @@ class UsageStore:
             self.calib = {m: c for m, c in data.get("calib", {}).items() if isinstance(c, dict)}
             for m, off in data.get("offsets", {}).items():  # older state files: a plain offset is a calibration at raw 0
                 self.calib.setdefault(m, {"raw": 0.0, "real": float(off), "factor": 1.0})
+            self.account = {m: a for m, a in data.get("account", {}).items() if isinstance(a, dict)}
         except (OSError, ValueError):
             pass
 
@@ -527,7 +534,8 @@ class UsageStore:
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"sessions": keep, "budget": self.budget, "calib": self.calib}, f)
+                account = {m: a for m, a in self.account.items() if m >= self._months_ago(2)}
+                json.dump({"sessions": keep, "budget": self.budget, "calib": self.calib, "account": account}, f)
             os.replace(tmp, self.path)
             self.dirty, self.saved_at = False, self.now()
         except OSError as exc:
@@ -558,9 +566,40 @@ class UsageStore:
         self.save()
         return True
 
+    def record_account(self, used, limit):
+        """This month's spend and limit from the Claude account (US$). Returns True if the numbers were accepted."""
+        for v in (used, limit):
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1000000:
+                return False
+        if not limit:
+            return False
+        month, day = self._stamp()
+        prev = self.account.get(month)
+        if prev is None:
+            day_start = float(used)  # what was spent before the first figure cannot be split into days
+        elif prev.get("day") != day:
+            day_start = prev["used"]  # the last figure before today
+        else:
+            day_start = prev.get("day_start", prev["used"])
+        raw = sum(v["max"] for v in self.sessions.values() if v.get("month") == month)
+        self.account[month] = {"used": round(float(used), 4), "limit": round(float(limit), 4), "at": round(self.now()),
+                               "raw": round(raw, 4), "day": day, "day_start": round(day_start, 4)}
+        self.dirty = True
+        self.save()
+        return True
+
+    def _account_growth(self, a):
+        """Estimated spend since the account's figure arrived, so the total keeps moving between two figures."""
+        month, _ = self._stamp()
+        raw = sum(v["max"] for v in self.sessions.values() if v.get("month") == month)
+        return max(0.0, raw - a.get("raw", raw))
+
     def month_usd(self):
         month, _ = self._stamp()
         raw = sum(v["max"] for v in self.sessions.values() if v.get("month") == month)
+        a = self.account.get(month)
+        if a:
+            return raw, a["used"] + self._account_growth(a)
         c = self.calib.get(month)
         if not c:
             return raw, raw
@@ -573,7 +612,10 @@ class UsageStore:
         return 1.0
 
     def today_usd(self):
-        _, day = self._stamp()
+        month, day = self._stamp()
+        a = self.account.get(month)
+        if a and a.get("day") == day:
+            return max(0.0, a["used"] - a.get("day_start", a["used"])) + self._account_growth(a)
         return sum(v["max"] - v.get("day_start", 0.0) for v in self.sessions.values() if v.get("day") == day)
 
     def calibrate(self, month_usd):
@@ -611,16 +653,18 @@ class UsageStore:
         return bytes([2, flags, pct]) + month.to_bytes(4, "little") + today.to_bytes(2, "little")
 
     def snapshot(self):
-        if not self.sessions and not self.calib and not self.budget["monthly_usd"]:
+        if not self.sessions and not self.calib and not self.budget["monthly_usd"] and not self.account:
             return None
         _, month = self.month_usd()
-        limit = self.budget["monthly_usd"]
+        a = self.account.get(self._stamp()[0])
+        limit = a["limit"] if a else self.budget["monthly_usd"]
         pct = round(100 * month / limit) if limit else None
         ctx = [v["ctx"] for v in self.sessions.values() if v.get("day") == self._stamp()[1] and "ctx" in v]
         return {"month_usd": round(month, 2), "today_usd": round(self.today_usd(), 2),
                 "budget_usd": limit, "warn_pct": self.budget["warn_pct"], "budget_used_pct": pct,
                 "over_warning": bool(limit and pct >= self.budget["warn_pct"]),
-                "context_pct": max(ctx) if ctx else None}
+                "context_pct": max(ctx) if ctx else None,
+                "source": "account" if a else "estimate", "account_at": a["at"] if a else None}
 
 
 USAGE = UsageStore()
@@ -628,7 +672,14 @@ BATTERY_LOG = BatteryLogFile()
 
 
 def ingest(text, queue):
-    """One text message from a hook or the relay: an event name, or 'usage:<session>:<usd>:<context %>'."""
+    """One text message from a hook or the relay: an event name, 'usage:<session>:<usd>:<context %>' or
+    'credits:<usd used>:<usd limit>' (the Claude account's own figures)."""
+    if text.startswith("credits:"):
+        parts = text.split(":")
+        try:
+            return len(parts) == 3 and USAGE.record_account(float(parts[1]), float(parts[2]))
+        except ValueError:
+            return False
     if text.startswith("usage:"):
         parts = text.split(":")
         try:
@@ -883,6 +934,14 @@ def route(method, path, headers, body, ctx):
             return respond(404, {"error": "not found"})
         name, _, session = path[3:].partition("/")
         ok = submit(f"{name}:{session}" if session else name, ctx.queue)
+        return respond(204 if ok else 400)
+
+    if path.startswith("/credits/"):  # status-line forwarder: /credits/<usd used>/<usd limit>
+        parts = path.split("/")[2:]
+        try:
+            ok = method == "POST" and len(parts) == 2 and USAGE.record_account(float(parts[0]), float(parts[1]))
+        except ValueError:
+            ok = False
         return respond(204 if ok else 400)
 
     if path.startswith("/usage/"):  # status-line forwarder: /usage/<session>/<usd>[/<context %>]

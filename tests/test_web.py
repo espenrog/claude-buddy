@@ -51,7 +51,7 @@ class SettingsFormatTests(unittest.TestCase):
     def test_invalid_values_are_explained(self):
         good = dict(self.b.SETTINGS_DEFAULTS)
         for key, bad, word in [("brightness", 0, "brightness"), ("brightness", 256, "brightness"),
-                               ("face_profile", 3, "face_profile"), ("volume", 101, "volume"),
+                               ("face_profile", 5, "face_profile"), ("volume", 101, "volume"),
                                ("quiet_start_h", 24, "quiet_start_h"), ("sleep_brightness", -1, "sleep_brightness"),
                                ("brightness", "high", "brightness"), ("brightness", True, "brightness"),
                                ("brightness", 12.5, "brightness"), ("muted", 1, "muted")]:
@@ -177,6 +177,44 @@ class UsageStoreTests(unittest.TestCase):
             self.assertEqual((snap["month_usd"], snap["budget_usd"], snap["warn_pct"]), (5.0, 50.0, 90))
             self.assertEqual(snap["context_pct"], 42)
 
+    def test_account_figure_replaces_the_estimate(self):
+        u = self.store()
+        u.set_budget(100, 80)
+        u.record("a", 10.0)
+        u.calibrate(50.0)
+        self.assertTrue(u.record_account(187.41, 500))
+        snap = u.snapshot()
+        self.assertEqual((snap["month_usd"], snap["budget_usd"], snap["budget_used_pct"], snap["source"]),
+                         (187.41, 500.0, 37, "account"))
+        u.record("a", 12.5)  # the estimate fills the gap until the next figure
+        self.assertEqual(u.snapshot()["month_usd"], 189.91)
+        u.record_account(189.0, 500)  # the next figure wins again
+        self.assertEqual(u.snapshot()["month_usd"], 189.0)
+        for bad in ((-1, 500), (10, 0), (10, -1), (True, 500), (10, 2e6), (float("nan"), 500)):
+            self.assertFalse(u.record_account(*bad), bad)
+
+    def test_account_today_is_the_growth_since_the_last_figure_before_midnight(self):
+        u = self.store()
+        u.record_account(100.0, 500)
+        self.assertEqual(u.today_usd(), 0.0)  # the first figure cannot be split into days
+        u.record_account(104.0, 500)
+        self.assertEqual(u.today_usd(), 4.0)
+        self.clock[0] += 86400
+        self.assertEqual(u.snapshot()["today_usd"], 0.0)  # no figure yet today; the estimate (nothing) is used
+        u.record_account(110.5, 500)
+        self.assertEqual(u.today_usd(), 6.5)
+
+    def test_account_figure_is_per_month_and_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "usage.json")
+            u = self.store(path)
+            u.record_account(42.0, 500)
+            self.assertEqual(self.store(path).snapshot()["month_usd"], 42.0)
+            u.clock = self.clock
+            self.clock[0] += 40 * 86400  # next month: back to the estimate until a new figure arrives
+            snap = u.snapshot()
+            self.assertEqual((snap["month_usd"], snap["source"], snap["budget_usd"]), (0.0, "estimate", 0.0))
+
     def test_ingest_parses_relay_messages(self):
         b = load_bridge()
         b.USAGE = b.UsageStore(None)
@@ -184,6 +222,10 @@ class UsageStoreTests(unittest.TestCase):
                          ("usage:abc", False), ("usage:abc:x", False), ("usage:a:b:c:d", False), ("usage:bad id:1", False)):
             self.assertEqual(bool(b.ingest(text, None)), ok, text)
         self.assertEqual(b.USAGE.month_usd()[0], 3.0)
+        for text, ok in (("credits:187.41:500", True), ("credits:1", False), ("credits:1:0", False),
+                         ("credits:x:500", False), ("credits:1:2:3", False)):
+            self.assertEqual(bool(b.ingest(text, None)), ok, text)
+        self.assertEqual(b.USAGE.month_usd()[1], 187.41)
 
 
 class StatusLineTests(unittest.TestCase):
@@ -206,6 +248,52 @@ class StatusLineTests(unittest.TestCase):
     def test_garbage_input_is_harmless(self):
         out = self.run_statusline({"nothing": "useful"}, {"http_port": free_port()})
         self.assertEqual((out.returncode, out.stdout), (0, ""))
+
+
+def load_statusline():
+    sys.path.insert(0, os.path.join(ROOT, "hooks"))
+    spec = importlib.util.spec_from_file_location("statusline_test", os.path.join(ROOT, "hooks", "statusline.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class AccountCreditsTests(unittest.TestCase):
+    ANSWER = {"extra_usage": {"monthly_limit": 50000, "used_credits": 18741.0},  # trimmed real answer, 2026-11-08
+              "spend": {"used": {"amount_minor": 18741, "currency": "USD", "exponent": 2},
+                        "limit": {"amount_minor": 50000, "currency": "USD", "exponent": 2},
+                        "percent": 37, "enabled": True}}
+
+    def setUp(self):
+        self.s = load_statusline()
+
+    def test_parses_the_spend(self):
+        self.assertEqual(self.s.parse_credits(self.ANSWER), (187.41, 500.0))
+
+    def test_anything_unexpected_gives_nothing(self):
+        spend = self.ANSWER["spend"]
+        for bad in (None, [], {}, {"spend": None}, {"spend": {**spend, "enabled": False}},
+                    {"spend": {**spend, "used": {"amount_minor": "1", "exponent": 2}}},
+                    {"spend": {**spend, "used": {**spend["used"], "currency": "EUR"}}},
+                    {"spend": {**spend, "limit": {"amount_minor": 0, "exponent": 2}}},
+                    {"spend": {**spend, "used": {"amount_minor": True, "exponent": 2}}}):
+            self.assertIsNone(self.s.parse_credits(bad), bad)
+
+    def test_token_from_the_claude_login(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["CLAUDE_CONFIG_DIR"] = tmp
+            try:
+                self.assertIsNone(self.s.read_token())  # no file: an API key user, or the macOS keychain
+                path = os.path.join(tmp, ".credentials.json")
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump({"claudeAiOauth": {"accessToken": "tok", "expiresAt": 2000 * 1000}}, f)
+                self.assertEqual(self.s.read_token(now=1999), "tok")
+                self.assertIsNone(self.s.read_token(now=2000))  # expired: wait for Claude Code to refresh it
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("not json")
+                self.assertIsNone(self.s.read_token())
+            finally:
+                del os.environ["CLAUDE_CONFIG_DIR"]
 
 
 class UsageWireTests(unittest.TestCase):
@@ -373,6 +461,30 @@ class FacePreviewTests(unittest.TestCase):
         # the mouth: chill has one under the eyes, limit does not
         chill = next(p for p in pictures if p.startswith("chill\n")).splitlines()[1:]
         self.assertIn("#", "".join(chill[44:56]))
+
+    def test_animal_eye_styles_render(self):
+        """Eye styles 3 (crow) and 4 (beaver): every mood draws something on screen, and there is no mouth."""
+        cc = next((c for c in ("cc", "gcc", "clang") if shutil.which(c)), None)
+        if cc is None:
+            self.skipTest("no C compiler found")
+        src = os.path.join(ROOT, "firmware", "src")
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = os.path.join(tmp, "face_preview.exe" if sys.platform == "win32" else "face_preview")
+            subprocess.run([cc, "-Wall", "-Werror", "-I", src, os.path.join(src, "face.c"), os.path.join(src, "mood.c"),
+                            os.path.join(src, "buddy_cfg.c"), os.path.join(src, "battery.c"),
+                            os.path.join(ROOT, "tests", "face_preview.c"), "-o", exe],
+                           check=True)
+            for profile in ("3", "4"):
+                out = subprocess.run([exe, "all", profile], capture_output=True, text=True, check=True).stdout
+                pictures = {p.splitlines()[0]: p.splitlines()[1:] for p in out.split("--- ")[1:]}
+                for name in ("sleeping", "chill", "bored", "working", "excited", "alert", "confused", "angry",
+                             "limit", "dizzy", "scared", "chill with dollar eyes", "no BLE link (dead face)"):
+                    rows = pictures[name]
+                    self.assertEqual(len(rows), 64, (profile, name))
+                    self.assertIn("#", "".join(rows), (profile, name))
+                # no mouth: the classic chill mouth row (y 48..52 around x 54..74) stays dark for the crow
+                if profile == "3":
+                    self.assertNotIn("#", "".join(r[54:75] for r in pictures["chill"][46:54]))
 
 
 class WebApiTests(unittest.TestCase):
@@ -546,6 +658,15 @@ class UsageApiTests(WebApiTests):
         code, body, _ = self.request("POST", "/api/calibrate", {"month_usd": 100}, self.API)
         self.assertEqual((code, body["usage"]["month_usd"]), (200, 100.0))
         self.assertEqual(self.request("POST", "/api/calibrate", {"month_usd": "lots"}, self.API)[0], 400)
+
+    def test_account_figure_from_the_status_line(self):
+        self.assertEqual(self.request("POST", "/credits/187.41/500")[0], 204)
+        self.assertEqual(self.request("POST", "/credits/1/0")[0], 400)
+        self.assertEqual(self.request("POST", "/credits/abc/500")[0], 400)
+        self.assertEqual(self.request("GET", "/credits/1/500")[0], 400)  # only POST
+        usage = self.status()["usage"]
+        self.assertEqual((usage["month_usd"], usage["budget_usd"], usage["budget_used_pct"], usage["source"]),
+                         (187.41, 500.0, 37, "account"))
 
     def test_changing_things_needs_the_header_and_a_local_page(self):
         self.assertEqual(self.request("POST", "/api/budget", {"monthly_usd": 5})[0], 403)

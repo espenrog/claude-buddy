@@ -287,9 +287,9 @@ def is_our_statusline(entry):
     return "claude-buddy" in cmd and "statusline.py" in cmd
 
 
-def previous_spending():
+def previous_spending(key="enabled"):
     try:
-        return bool((json.loads(CONFIG.read_text(encoding="utf-8")).get("statusline") or {}).get("enabled"))
+        return bool((json.loads(CONFIG.read_text(encoding="utf-8")).get("statusline") or {}).get(key))
     except (OSError, ValueError):
         return False
 
@@ -640,7 +640,7 @@ def choose_setup(ask, args):
     return True, True, "host"
 
 
-def describe_plan(claude, buddy, relay_role, relay, tunnel, spending=False, copilot=False):
+def describe_plan(claude, buddy, relay_role, relay, tunnel, spending=False, account=False, copilot=False):
     steps = []
     if claude:
         steps.append(f"Add {len(HOOKS)} hooks to {SETTINGS} (a backup is made first; your own hooks are kept).")
@@ -650,6 +650,8 @@ def describe_plan(claude, buddy, relay_role, relay, tunnel, spending=False, copi
         steps.append(f"Remove Claude Buddy's Copilot hooks from {COPILOT_HOOK_FILE}.")
     if claude and spending:
         steps.append(f"Make Claude Code's status line forward its estimated cost to the buddy (any status line you have keeps working).")
+    if claude and spending and account:
+        steps.append("Every 5 minutes while Claude Code runs, read this month's spend and limit from your Claude account and forward them.")
     if relay_role == "host":
         steps.append(f"Start a relay (Docker container '{BROKER_CONTAINER}') on port {relay['port']}.")
     if relay_role == "join":
@@ -705,6 +707,12 @@ def cmd_install(args):
         say("warn when you pass a monthly budget. It works by making Claude Code's status line send the cost to the bridge;")
         say("a status line you already have keeps working.")
         spending = ask.yesno("Track estimated spending?", previous_spending(), args.spending)
+    account = False
+    if spending:
+        say("\nOptional: instead of the estimate, show the exact figure from your Claude account (what /usage shows under")
+        say("\"Usage credits\", with its monthly limit as the budget). It uses the Claude Code login on this machine to ask")
+        say("Anthropic every 5 minutes; only the two amounts are sent on. The endpoint is not documented and may change.")
+        account = ask.yesno("Read spending from your Claude account?", previous_spending("account"), args.account_spend)
 
     use_relay = relay_role is not None
     cfg = {
@@ -715,11 +723,11 @@ def cmd_install(args):
         "relay": relay if use_relay else {},
         "bridge": {"inputs": ["mqtt"] if use_relay else ["http"], "ble": True, "ble_address": None, "ble_name": None,
                    "ssh_tunnel": tunnel},
-        "statusline": {"enabled": spending},
+        "statusline": {"enabled": spending, "account": account},
     }
 
     say("\nThis is what I am going to do:")
-    for i, step in enumerate(describe_plan(claude, buddy, relay_role, relay, tunnel, spending, copilot), 1):
+    for i, step in enumerate(describe_plan(claude, buddy, relay_role, relay, tunnel, spending, account, copilot), 1):
         say(f"  {i}. {step}")
     if not ask.yesno("\nGo ahead?", True):
         say("Nothing was changed.")
@@ -888,6 +896,7 @@ def cmd_doctor():
             rep.fail(f"statusline.py missing in {DATA_DIR}", "run: python3 install.py")
         else:
             rep.ok("status line forwards estimated spending" +
+                   (" and the Claude account's figure" if cfg["statusline"].get("account") else "") +
                    (" (and runs your own status line)" if cfg["statusline"].get("chain") else ""))
     if ours:
         say("  (Claude Code reads hooks when a session starts: restart running sessions after installing.)")
@@ -1004,6 +1013,8 @@ def main():
                     help="the buddy is next to this machine (yes/no)")
     ap.add_argument("--spending", type=lambda v: v.lower() in ("1", "y", "yes", "true"),
                     help="forward estimated cost from Claude Code's status line (yes/no)")
+    ap.add_argument("--account-spend", type=lambda v: v.lower() in ("1", "y", "yes", "true"),
+                    help="with --spending: also read the month's spend and limit from your Claude account (yes/no)")
     ap.add_argument("--relay", choices=["none", "host", "join"])
     ap.add_argument("--relay-host")
     ap.add_argument("--relay-port")

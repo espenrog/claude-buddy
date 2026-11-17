@@ -1,4 +1,4 @@
-/* Host tool: draws every mood and the stats page as ASCII art. Usage: face_preview [mood 0-10 | name | stats | readme]
+/* Host tool: draws every mood and the stats page as ASCII art. Usage: face_preview [mood 0-10 | name | stats | readme] [eye style 0-4]
  * Built and checked by tests/test_web.py (no overlapping or off-screen drawing crashes), handy for eyeballing changes. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +28,7 @@ int main(int argc, char **argv)
 	struct buddy_usage some = {.flags = 1, .month_pct = 42, .has_amounts = true, .month_cents = 8421, .today_cents = 305};
 	struct buddy_usage big = {.flags = 0, .has_amounts = true, .month_cents = 123456789, .today_cents = 65535};
 	const char *what = argc > 1 ? argv[1] : "all";
+	uint8_t profile = argc > 2 ? (uint8_t)atoi(argv[2]) : 0;
 
 	if (strcmp(what, "readme") == 0) {
 		/* The pictures in the README (tools/render-faces.py): one session, so no session squares. */
@@ -53,15 +54,15 @@ int main(int argc, char **argv)
 		    strcmp(what, names[m]) != 0) {
 			continue;
 		}
-		face_render(fb, (enum mood)m, 1000, true, &sessions, 0, &none, BATTERY_OK);
+		face_render(fb, (enum mood)m, 1000, true, &sessions, profile, &none, BATTERY_OK);
 		dump(fb, names[m]);
 	}
 	if (strcmp(what, "all") == 0 || strcmp(what, "dollars") == 0) {
-		face_render(fb, MOOD_CHILL, 1000, true, &sessions, 0, &over, BATTERY_OK);
+		face_render(fb, MOOD_CHILL, 1000, true, &sessions, profile, &over, BATTERY_OK);
 		dump(fb, "chill with dollar eyes");
 	}
 	if (strcmp(what, "all") == 0 || strcmp(what, "dead") == 0) {
-		face_render(fb, MOOD_CHILL, 1000, false, &sessions, 0, &none, BATTERY_OK);
+		face_render(fb, MOOD_CHILL, 1000, false, &sessions, profile, &none, BATTERY_OK);
 		dump(fb, "no BLE link (dead face)");
 	}
 	if (strcmp(what, "all") == 0 || strcmp(what, "stats") == 0) {

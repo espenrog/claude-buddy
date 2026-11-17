@@ -76,7 +76,7 @@
       </select>
       <div class="hint muted small">A poke (button 1) or any event wakes it up.</div></div>
     <div class="row"><label for="face_profile">Eye style</label>
-      <select id="face_profile"><option value="0">Bars</option><option value="1">Rounded</option><option value="2">Rounded with highlight</option></select></div>
+      <select id="face_profile"><option value="0">Bars</option><option value="1">Rounded</option><option value="2">Rounded with highlight</option><option value="3">Crow (Hugin)</option><option value="4">Beaver</option></select></div>
     <div class="row"><label for="volume">Buzzer volume</label><input id="volume" type="range" min="0" max="100">
       <div class="hint muted small">Only on a buddy with a buzzer. Mute and quiet hours silence it; the quiet hours follow this computer's clock.</div></div>
     <div class="row"><label for="muted">Mute</label><input id="muted" type="checkbox"></div>
@@ -87,18 +87,18 @@
   </section>
 
   <section class="card" id="spend">
-    <h2>Spending (estimate)</h2>
+    <h2 id="spendtitle">Spending (estimate)</h2>
     <div id="nospend" class="muted">Nothing reported yet. Install the status-line forwarder (python3 install.py, option "spending") and use Claude Code.</div>
     <div id="spendbody" hidden>
       <div class="now"><div class="mood" id="month">&nbsp;</div><div class="muted" id="today"></div></div>
       <div class="bar" aria-hidden="true"><div id="barfill"></div></div>
       <div class="muted small" id="barlabel"></div>
-      <div class="row"><label for="budget">Monthly budget (US$)</label>
+      <div class="row" id="budgetrow"><label for="budget">Monthly budget (US$)</label>
         <div><input id="budget" type="number" min="0" step="1"> <label for="warn" class="small muted">warn at</label>
         <input id="warn" type="number" min="1" max="100" step="1" style="width:5em"> %
         <button id="savebudget">Save</button></div>
         <div class="hint muted small">0 turns the budget off. Above the warning level the eyes turn into dollar signs (needs firmware 0.4).</div></div>
-      <div class="row"><label for="calib">Set this month's total to (US$)</label>
+      <div class="row" id="calibrow"><label for="calib">Set this month's total to (US$)</label>
         <div><input id="calib" type="number" min="0" step="0.01"> <button id="savecalib">Set</button></div>
         <div class="hint muted small">Claude Code only estimates cost at list prices. Type the figure your Claude app shows (Settings, Usage). Do it again a few days later and the buddy learns the ratio between the two and scales new spend by it.</div></div>
       <span id="spendmsg" class="small"></span>
@@ -196,12 +196,16 @@ const usd = n => "$" + n.toFixed(2);
 function renderSpend(u) {
   $("nospend").hidden = !!u; $("spendbody").hidden = !u;
   if (!u) return;
-  $("month").textContent = "est. " + usd(u.month_usd) + " this month";
+  const acct = u.source === "account";
+  $("spendtitle").textContent = acct ? "Spending (from your Claude account)" : "Spending (estimate)";
+  $("month").textContent = (acct ? "" : "est. ") + usd(u.month_usd) + " this month";
+  $("budgetrow").hidden = $("calibrow").hidden = acct;
   $("today").textContent = usd(u.today_usd) + " today" + (u.context_pct != null ? " · context " + Math.round(u.context_pct) + "% full" : "");
   const has = u.budget_usd > 0;
   $("barfill").style.width = has ? Math.min(100, u.budget_used_pct) + "%" : "0";
   $("barfill").className = u.over_warning ? "warn" : "";
-  $("barlabel").textContent = has ? u.budget_used_pct + "% of " + usd(u.budget_usd) + " budget" : "No budget set";
+  $("barlabel").textContent = has ? u.budget_used_pct + "% of " + usd(u.budget_usd) + (acct ? " account limit" : " budget") : "No budget set";
+  if (acct && u.account_at) $("barlabel").textContent += " · account read " + new Date(u.account_at * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
   if (document.activeElement !== $("budget") && document.activeElement !== $("warn")) { $("budget").value = u.budget_usd; $("warn").value = u.warn_pct; }
 }
 function spendSay(t, ok) { $("spendmsg").textContent = t; $("spendmsg").className = "small " + (ok ? "good" : "err"); setTimeout(() => $("spendmsg").textContent = "", 4000); }

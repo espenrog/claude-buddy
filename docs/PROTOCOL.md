@@ -80,7 +80,7 @@ The buddy saves a change to its non-volatile memory two seconds later (so draggi
 | 0 | format | `1` |
 | 1 | `brightness`: display contrast while awake | 1 to 255 |
 | 2 | `sleep_brightness`: contrast while the buddy sleeps | 0 (display off) to 255; default 8 (dim) |
-| 3 | `face_profile`: eye style | 0 bars, 1 rounded, 2 rounded with a highlight |
+| 3 | `face_profile`: eye style | 0 bars, 1 rounded, 2 rounded with a highlight, 3 crow, 4 beaver (3 and 4: eyes only, no mouth) |
 | 4 | `volume`: buzzer volume, for hardware that has one | 0 to 100 |
 | 5 | `quiet_start_h`: buzzer is silent from this hour... | 0 to 23 |
 | 6 | `quiet_end_h`: ...until this hour (may wrap past midnight; equal values mean never) | 0 to 23 |
