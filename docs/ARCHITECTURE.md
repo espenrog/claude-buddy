@@ -85,7 +85,7 @@ stream. (They can differ briefly for time-based moods such as *bored*, depending
 ```mermaid
 flowchart TB
     BLE["ble_svc.c<br/>advertising, connection, GATT write"] -->|"ui_post_event(code)"| Q[["message queue"]]
-    BTN["main.c<br/>button 1 = poke"] -->|"ui_post_poke()"| Q
+    BTN["main.c<br/>buttons"] -->|"button presses"| Q
     Q --> UI["ui.c<br/>work item every 50 ms"]
     UI --> MOOD["mood.c<br/>pure state machine<br/>(no Zephyr dependencies)"]
     UI --> FACE["face.c<br/>draws the face into a 1-bit framebuffer"]

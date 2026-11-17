@@ -114,7 +114,7 @@ Unplug USB-C first. All parts go to the XIAO's header pins (pin table in [HARDWA
 | Mute button (also the pairing button) | D2 to GND |
 | Page button | D1 to GND |
 
-The buttons need no resistors (internal pull-ups). D0 stays free. The board's own small button is "poke".
+The buttons need no resistors (internal pull-ups). D0 stays free.
 
 Plug USB-C back in. **You should see:** the face on the OLED, with X eyes (no bridge connected yet). Press page: the
 stats page appears; again: the battery page; again: back to the face. Press mute: the display shows `MUTED`, then

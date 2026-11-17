@@ -34,7 +34,6 @@ Set in `firmware/boards/xiao_nrf54lm20a_nrf54lm20a_cpuapp.overlay`:
 | D3 | P1.29 | buzzer, PWM21, other leg to GND |
 | D2 | P1.30 | mute button to GND (internal pull-up); also the pairing button |
 | D1 | P1.31 | page button to GND (internal pull-up) |
-| (user button) | P0.09 | the board's own small button: poke |
 | D0 | P1.00 | free |
 | 3V3, GND | | OLED supply and ground |
 
@@ -42,7 +41,6 @@ D0 to D3 are the header pins with no default peripheral, so the board's uart21 (
 
 Buttons in the firmware (`main.c`):
 
-* **Poke** (the board's button): five presses within four seconds make the buddy angry. Any press wakes a dark display.
 * **Mute** (D2): a short press toggles mute (acted on at release) and shows `MUTED` or `UNMUTED`. Holding it 3 s opens the
   pairing window (`PAIRING`); 8 s forgets every pairing.
 * **Page** (D1): steps through the stats page, the battery page and back to the face.

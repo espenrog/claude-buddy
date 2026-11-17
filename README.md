@@ -11,9 +11,9 @@ enable personal hooks with `python3 install.py --copilot yes`. See [Copilot setu
 > This project takes that idea to Nordic Bluetooth LE hardware and an OLED face. See [Credits](#credits-and-license).
 
 <table>
-  <tr><td align="center"><img src="docs/images/faces/sleeping.png" width="200" alt="asleep"><br><sub>asleep</sub></td><td align="center"><img src="docs/images/faces/chill.png" width="200" alt="chill"><br><sub>chill</sub></td><td align="center"><img src="docs/images/faces/working.png" width="200" alt="working"><br><sub>working</sub></td><td align="center"><img src="docs/images/faces/excited.png" width="200" alt="turn finished"><br><sub>turn finished</sub></td></tr>
-  <tr><td align="center"><img src="docs/images/faces/alert.png" width="200" alt="needs you"><br><sub>needs you</sub></td><td align="center"><img src="docs/images/faces/confused.png" width="200" alt="confused (error)"><br><sub>confused (error)</sub></td><td align="center"><img src="docs/images/faces/angry.png" width="200" alt="angry (poked too much)"><br><sub>angry (poked too much)</sub></td><td align="center"><img src="docs/images/faces/limit.png" width="200" alt="usage limit hit"><br><sub>usage limit hit</sub></td></tr>
-  <tr><td align="center"><img src="docs/images/faces/dollars.png" width="200" alt="over budget"><br><sub>over budget</sub></td><td align="center"><img src="docs/images/faces/stats.png" width="200" alt="stats page"><br><sub>stats page</sub></td></tr>
+  <tr><td align="center"><img src="docs/images/faces/sleeping.png" width="200" alt="asleep"><br><sub>asleep</sub></td><td align="center"><img src="docs/images/faces/chill.png" width="200" alt="chill"><br><sub>chill</sub></td><td align="center"><img src="docs/images/faces/working.png" width="200" alt="working"><br><sub>working</sub></td></tr>
+  <tr><td align="center"><img src="docs/images/faces/excited.png" width="200" alt="turn finished"><br><sub>turn finished</sub></td><td align="center"><img src="docs/images/faces/alert.png" width="200" alt="needs you"><br><sub>needs you</sub></td><td align="center"><img src="docs/images/faces/confused.png" width="200" alt="confused (error)"><br><sub>confused (error)</sub></td></tr>
+  <tr><td align="center"><img src="docs/images/faces/limit.png" width="200" alt="usage limit hit"><br><sub>usage limit hit</sub></td><td align="center"><img src="docs/images/faces/dollars.png" width="200" alt="over budget"><br><sub>over budget</sub></td><td align="center"><img src="docs/images/faces/stats.png" width="200" alt="stats page"><br><sub>stats page</sub></td></tr>
 </table>
 
 <sub>Drawn by the firmware's own code (<code>tools/render-faces.py</code>), pixel for pixel as on the 128x64 OLED.</sub>
@@ -106,7 +106,7 @@ by [Milos Rasic](https://github.com/MilosRasic98) (an ESP32-S3 desk mascot with 
 Ideas taken from it:
 
 * a physical desk gadget driven by **Claude Code hooks**, one hook per lifecycle event;
-* the **mood vocabulary** (sleeping, chill, bored, working, excited, confused, angry, limit reached) and the
+* the **mood vocabulary** (sleeping, chill, bored, working, excited, confused, limit reached) and the
   rule that boredom and sleep are the *absence* of events, so the device keeps its own clock;
 * the idea of a "needs you" state that stays on until you answer.
 

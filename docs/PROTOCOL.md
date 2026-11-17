@@ -86,7 +86,7 @@ The buddy saves a change to its non-volatile memory two seconds later (so draggi
 | 6 | `quiet_end_h`: ...until this hour (may wrap past midnight; equal values mean never) | 0 to 23 |
 | 7 | flags | bit 0 = muted; other bits must be 0 |
 
-While the display is off or dimmed for sleep, an event (or a poke) wakes it up again.
+While the display is off or dimmed for sleep, an event wakes it up again.
 
 ## Status characteristic
 
@@ -94,7 +94,7 @@ Five bytes, readable, and notified whenever they change (subscribe to it to foll
 
 | Byte | Meaning |
 |---|---|
-| 0 | current mood: 0 sleeping, 1 chill, 2 bored, 3 working, 4 excited, 5 alert, 6 confused, 7 angry, 8 limit |
+| 0 | current mood: 0 sleeping, 1 chill, 2 bored, 3 working, 4 excited, 5 alert, 6 confused, 8 limit |
 | 1 | sessions the buddy knows about |
 | 2 | ... of which are working |
 | 3 | ... of which wait for you |
@@ -253,15 +253,13 @@ stateDiagram-v2
     CHILL --> SLEEPING: no activity for 30 min
     SLEEPING --> WORKING: prompt_submitted
     BORED --> WORKING: prompt_submitted
-    CHILL --> ANGRY: 5 pokes in 4 s
-    ANGRY --> CHILL: after 5 s
 ```
 
-Priority when several apply (highest first): **limit**, **alert**, a timed mood (angry, confused, excited),
+Priority when several apply (highest first): **limit**, **alert**, a timed mood (confused, excited),
 **working**, **sleeping**, **bored**, **chill**.
 
 Every mood also has a **mouth** under the eyes: a smile (chill), a small straight line (working), a flat line (bored),
-a wide grin (excited), an open "o" (alert), a wavy line (confused), a frown (angry),
+a wide grin (excited), an open "o" (alert), a wavy line (confused),
 a tiny dash (sleeping); the limit
 screen has none. With dollar-sign eyes the mouth is the grin. Session squares sit in the top left corner.
 
@@ -272,7 +270,6 @@ screen has none. With dollar-sign eyes the mouth is the grin. Session squares si
 | excited | `><` eyes, bouncing |
 | alert | `><` eyes, flashing between normal and inverted |
 | confused | mismatched eyes, wobbling |
-| angry | slanted eyes |
 | limit | frame around a blinking `!` |
 | bored | half-closed eyes, gaze drifting |
 | sleeping | closed eyes, slow breathing; refreshes at a lower rate |
