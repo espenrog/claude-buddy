@@ -6,6 +6,8 @@ intently while Claude works, grins when a turn finishes, and flashes when Claude
 Also supports local **GitHub Copilot** sessions (CLI and the VS Code Copilot session target):
 enable personal hooks with `python3 install.py --copilot yes`. See [Copilot setup](docs/SETUP.md#github-copilot-optional).
 
+<p align="center"><img src="docs/images/claude-buddy.gif" width="640" alt="Claude Buddy in 20 seconds: it watches Claude work, beeps when Claude needs you, gets muted from the back, flips to the spend page and gets dollar eyes"></p>
+
 > **Inspired by [ClaudeMonitorCompanion](https://github.com/MilosRasic98/ClaudeMonitorCompanion)**
 > by Milos Rasic: an ESP32 desk mascot with a mechanical bell that reacts to Claude Code hooks.
 > This project takes that idea to Nordic Bluetooth LE hardware and an OLED face. See [Credits](#credits-and-license).
