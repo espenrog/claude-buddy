@@ -13,7 +13,7 @@ Time: about an hour, most of it soldering.
 
 | Item | Notes |
 |---|---|
-| Seeed XIAO nRF54LM20A | Plain or Sense. Only the Sense has the accelerometer (gestures); everything else is the same |
+| Seeed XIAO nRF54LM20A | The plain board |
 | The XIAO's antenna | **Fit it.** Without it the range is a few centimetres and nothing connects |
 | Buddy carrier board (optional) | Holds the XIAO, OLED connector, buzzer, two buttons, power switch and a battery connector. Without it, wire the parts by hand (step 4b) |
 | 1.3" SH1106 OLED, 128x64, I2C | Check your module's pin order (VCC/GND/SCL/SDA differs between vendors) |
@@ -200,7 +200,6 @@ Label the buddy with its four-character name. Keep the signing key backed up.
 | Bridge cannot find or connect to the buddy | Antenna missing; another computer's bridge already holds the connection (one at a time) |
 | Display stays black, log looks fine | OLED SDA/SCL swapped, or the module's VCC/GND pins are in another order |
 | Buddy rejects an update | Image signed with a different key than the one in its first flash |
-| No gestures | Plain XIAO: gestures need the Sense board |
 | Bridge stays with the old buddy | Set `bridge.ble_name` and restart the bridge (step 6) |
 | Carrier: nothing on the serial port, or the XIAO gets warm | A solder bridge under the edge pads: redo the checks in step 4a |
 | Runs on USB-C only, not on the cell | Power switch off, cell plug reversed, or the BAT pair not soldered |

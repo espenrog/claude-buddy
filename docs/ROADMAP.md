@@ -60,12 +60,10 @@ A Nordic development kit with an SH1106 OLED; nine moods; local and relay modes;
 * A unique name per buddy (`Claude Buddy A1B2`) and pairing (LE Secure Connections, a pairing window opened by a button).
 * **Firmware update over Bluetooth:** MCUboot with two slots and an SMP server in the application; the bridge's web page sends
   the update. **Done, verified on a board.**
-* Accelerometer gestures (shake, pick up, double tap, drop) on the XIAO Sense. Written, not yet run on a Sense.
 * A carrier board (Altium, in [hardware/](../hardware/)) and a power switch in series with the cell. **First boards built and working.**
 
 ## v0.9: polish
 * A model of the real cell for the fuel gauge (nPM PowerUP), so the percentage is accurate.
-* Tune the gesture thresholds on a Sense, and measure the accelerometer's current.
 * More stats pages (context, sessions); long presses.
 
 ## v1.0: ready for other people

@@ -94,7 +94,7 @@ Five bytes, readable, and notified whenever they change (subscribe to it to foll
 
 | Byte | Meaning |
 |---|---|
-| 0 | current mood: 0 sleeping, 1 chill, 2 bored, 3 working, 4 excited, 5 alert, 6 confused, 7 angry, 8 limit, 9 dizzy, 10 scared (9 and 10 only on boards with an accelerometer) |
+| 0 | current mood: 0 sleeping, 1 chill, 2 bored, 3 working, 4 excited, 5 alert, 6 confused, 7 angry, 8 limit |
 | 1 | sessions the buddy knows about |
 | 2 | ... of which are working |
 | 3 | ... of which wait for you |
@@ -255,17 +255,13 @@ stateDiagram-v2
     BORED --> WORKING: prompt_submitted
     CHILL --> ANGRY: 5 pokes in 4 s
     ANGRY --> CHILL: after 5 s
-    CHILL --> DIZZY: shaken
-    DIZZY --> CHILL: after 4 s
-    CHILL --> SCARED: dropped
-    SCARED --> CHILL: after 2.5 s
 ```
 
-Priority when several apply (highest first): **limit**, **alert**, a timed mood (angry, confused, excited, dizzy, scared),
+Priority when several apply (highest first): **limit**, **alert**, a timed mood (angry, confused, excited),
 **working**, **sleeping**, **bored**, **chill**.
 
 Every mood also has a **mouth** under the eyes: a smile (chill), a small straight line (working), a flat line (bored),
-a wide grin (excited), an open "o" (alert), a wavy line (confused), a rolling wave (dizzy), a tall "O" (scared), a frown (angry),
+a wide grin (excited), an open "o" (alert), a wavy line (confused), a frown (angry),
 a tiny dash (sleeping); the limit
 screen has none. With dollar-sign eyes the mouth is the grin. Session squares sit in the top left corner.
 
@@ -280,8 +276,6 @@ screen has none. With dollar-sign eyes the mouth is the grin. Session squares si
 | limit | frame around a blinking `!` |
 | bored | half-closed eyes, gaze drifting |
 | sleeping | closed eyes, slow breathing; refreshes at a lower rate |
-| dizzy | spinning spiral eyes, swaying (shaken) |
-| scared | wide hollow eyes with tiny pupils, trembling (dropped) |
 
 Bored and sleeping are the *absence* of events, so the firmware keeps its own clock. This also means
 the buddy behaves sensibly when the computer sleeps, the network drops or Claude Code is closed.

@@ -12,7 +12,7 @@ all work. Checked against Seeed's V1.0 schematic and KiCad files (published unde
 
 | Part | Notes |
 |---|---|
-| Seeed **XIAO nRF54LM20A** | Plain or Sense. Only the Sense has the accelerometer (gestures, see below); everything else is the same. |
+| Seeed **XIAO nRF54LM20A** | The plain board. |
 | The XIAO's antenna | **Fit it.** Without it the range is a few centimetres and the bridge cannot connect, which looks like a firmware fault. |
 | **1.3" 128x64 OLED, SH1106, I2C** | White on black, usually 4 pins (GND, VCC, SCL, SDA), I2C address 0x3C. The pin order differs between vendors: check yours. |
 | Passive piezo buzzer (optional) | Not an active buzzer (those only beep at one pitch). Without one the firmware runs and makes no sound. |
@@ -75,28 +75,7 @@ There is no eye-style button: set the eye style from the web page.
 5. The nPM1300's LED outputs light the board's charge LEDs at their reset default; the overlay puts them in host mode (off).
 6. The accelerometer and microphone run from the nPM1300's LDO1, which the board file sets to **1.8 V**, while the nRF's pins
    are at 3.3 V and the sensor's I2C pull-ups go to its own supply. Going by the schematic the nRF cannot read that bus. The
-   overlay sets LDO1 to 3.3 V (the sensor takes up to 3.6 V) and turns the regulator driver on. Not yet confirmed on a Sense.
-
-## Accelerometer (shake, pick up, double tap, drop)
-
-**Needs the XIAO nRF54LM20A Sense.** The plain board has no IMU (and no microphone), although the SDK's board file and Seeed's
-schematic describe the Sense. On a plain board `i2c scan` finds nothing, the firmware logs `No accelerometer (err -5, id 0x00)`
-and carries on without gestures.
-
-The Sense's LSM6DS3TR-C (i2c30 on P0.07/P0.08, INT1 on P0.06, address 0x6a) is set up by `firmware/src/motion.c`, not by
-Zephyr's driver (`CONFIG_LSM6DSL=n`: it has no tap or free-fall interrupts). The sensor watches in hardware and raises INT1;
-the processor only reads samples for 1.5 s after a movement, to tell a shake from a pick-up (`firmware/src/shake.c`).
-
-| Gesture | What the sensor sees | What the buddy does |
-|---|---|---|
-| Double tap on the case | double tap (750 mg, up to ~0.5 s apart) | a poke (5 in 4 s make it angry) |
-| Picked up / moved | movement over 125 mg | lights a dark display for 10 s |
-| Shaken | 4 swings of more than 1 g on one axis, alternating, within 1.5 s | **dizzy** for 4 s (spiral eyes) |
-| Dropped | under 312 mg for ~80 ms (free fall) | **scared** for 2.5 s, plays a falling whistle |
-
-Alerts and the limit screen still win over dizzy and scared. A held measurement mode ignores all of it. The thresholds are
-first guesses, not yet tuned on a board. Tap detection needs the sensor at 416 Hz: expect roughly 0.1 to 0.2 mA extra
-(an estimate, not measured).
+   overlay sets LDO1 to 3.3 V (the sensor takes up to 3.6 V) and turns the regulator driver on.
 
 ## Battery
 

@@ -87,7 +87,7 @@ firmware/
     ├── buzzer.c, sound.c  PWM buzzer and the sound patterns
     ├── buddy_clock.c   local time from the bridge, for quiet hours
     ├── measure_mode.c  held states for power measurements
-    ├── motion.c, shake.c  accelerometer setup and gesture detection (XIAO Sense)
+    ├── motion.c, shake.c  accelerometer setup and gesture detection
     └── smp_update.c    confirms a new image after an update
 ```
 
