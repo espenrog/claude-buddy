@@ -179,18 +179,15 @@ refresh. The installer asks whether to track spending (or pass `--spending yes`)
   `install.py --spending no` or `--uninstall` puts your own one back.
 * The bridge keeps the totals in `~/.local/share/claude-buddy/usage.json` and shows them on the web page: this month,
   today, the context window, and a budget bar. The month total is the sum of each session's highest cost seen.
-* The numbers are estimates at list prices. Claude Code does not know what your plan or company actually bills. If the
-  Claude app shows a total (Settings, Usage), type it into "Set this month's total" on the web page. The first time this
-  just lines the two up. Each later time, once the estimate has grown by at least US$5, the buddy works out the ratio
-  between how much the app's figure and the estimate grew, and scales new spend by it (limited to 0.5 to 5).
-  Spend that never reaches the bridge (other machines, the chat apps) is picked up the same way, as a higher ratio.
+* The numbers are estimates at list prices. Claude Code does not know what your plan or company actually bills. For
+  the real figure, turn on the account spend below.
 * **Exact figure from your Claude account (optional, `--account-spend yes`).** If you log in to Claude Code with a
   Claude account that has usage credits (what `/usage` shows as "Usage credits: $186.79 / $500.00 spent"), the status
   line can read that figure instead. At most every 5 minutes it starts `statusline.py --credits` in the background, which
   reads the access token Claude Code keeps in `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`), asks
   `https://api.anthropic.com/api/oauth/usage` and forwards only the two amounts (`credits:<used>:<limit>` over the relay,
   `POST /credits/<used>/<limit>` over HTTP). The token itself never leaves the machine. The bridge then shows the
-  account's figure as the month total and its limit as the budget (your budget amount and the calibration are hidden on
+  account's figure as the month total and its limit as the budget (your budget amount is hidden on
   the web page; the warning level still applies). Between two readings the estimate fills the gap; a new month starts
   from the estimate until the first reading. "Today" counts from the last reading before midnight.
   The endpoint is the one Claude Code's own `/usage` screen uses and is **not documented**: if it fails, the login has

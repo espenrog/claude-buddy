@@ -98,9 +98,6 @@
         <input id="warn" type="number" min="1" max="100" step="1" style="width:5em"> %
         <button id="savebudget">Save</button></div>
         <div class="hint muted small">0 turns the budget off. Above the warning level the eyes turn into dollar signs (needs firmware 0.4).</div></div>
-      <div class="row" id="calibrow"><label for="calib">Set this month's total to (US$)</label>
-        <div><input id="calib" type="number" min="0" step="0.01"> <button id="savecalib">Set</button></div>
-        <div class="hint muted small">Claude Code only estimates cost at list prices. Type the figure your Claude app shows (Settings, Usage). Do it again a few days later and the buddy learns the ratio between the two and scales new spend by it.</div></div>
       <span id="spendmsg" class="small"></span>
     </div>
   </section>
@@ -199,7 +196,7 @@ function renderSpend(u) {
   const acct = u.source === "account";
   $("spendtitle").textContent = acct ? "Spending (from your Claude account)" : "Spending (estimate)";
   $("month").textContent = (acct ? "" : "est. ") + usd(u.month_usd) + " this month";
-  $("budgetrow").hidden = $("calibrow").hidden = acct;
+  $("budgetrow").hidden = acct;
   $("today").textContent = usd(u.today_usd) + " today" + (u.context_pct != null ? " · context " + Math.round(u.context_pct) + "% full" : "");
   const has = u.budget_usd > 0;
   $("barfill").style.width = has ? Math.min(100, u.budget_used_pct) + "%" : "0";
@@ -211,8 +208,6 @@ function renderSpend(u) {
 function spendSay(t, ok) { $("spendmsg").textContent = t; $("spendmsg").className = "small " + (ok ? "good" : "err"); setTimeout(() => $("spendmsg").textContent = "", 4000); }
 $("savebudget").onclick = () => post("/api/budget", {monthly_usd: parseFloat($("budget").value || "0"), warn_pct: parseInt($("warn").value || "80", 10)})
   .then(r => { renderSpend(r.usage); spendSay("Saved", true); }).catch(e => spendSay(e.message, false));
-$("savecalib").onclick = () => post("/api/calibrate", {month_usd: parseFloat($("calib").value)})
-  .then(r => { renderSpend(r.usage); $("calib").value = ""; spendSay("Total set", true); }).catch(e => spendSay(e.message, false));
 
 function renderBattery(b) {
   if (!b || !b.present) { $("battery").textContent = b ? "No battery" : ""; return; }
